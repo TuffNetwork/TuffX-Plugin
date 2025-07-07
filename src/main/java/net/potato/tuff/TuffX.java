@@ -3,6 +3,7 @@ package net.potato.tuff;
 import org.bukkit.ChatColor;
 import org.bukkit.command.Command;
 import org.bukkit.command.CommandSender;
+import org.bukkit.command.TabCompleter;
 import org.bukkit.Chunk;
 import org.bukkit.GameMode;
 import org.bukkit.Location;
@@ -31,12 +32,15 @@ import java.io.DataInputStream;
 import java.io.DataOutputStream;
 import java.io.IOException;
 import java.nio.charset.StandardCharsets;
+import java.util.ArrayList;
 import java.util.Collections;
+import java.util.List;
 import java.util.Set;
 import java.util.UUID;
 import java.util.concurrent.ConcurrentHashMap;
+import java.util.stream.Collectors;
 
-public class TuffX extends JavaPlugin implements Listener, PluginMessageListener {
+public class TuffX extends JavaPlugin implements Listener, PluginMessageListener, TabCompleter {
 
     public static final String CHANNEL = "eagler:below_y0";
     private final Set<ChunkSectionKey> sentSections = Collections.newSetFromMap(new ConcurrentHashMap<>());
@@ -49,26 +53,120 @@ public class TuffX extends JavaPlugin implements Listener, PluginMessageListener
         getServer().getMessenger().registerIncomingPluginChannel(this, CHANNEL, this);
         getServer().getPluginManager().registerEvents(this, this);
         this.getCommand("tuffx").setExecutor(this);
+        this.getCommand("tuffx").setTabCompleter(this);
         logFancyEnable();
     }
 
     @Override
     public boolean onCommand(CommandSender sender, Command command, String label, String[] args) {
-        if (command.getName().equalsIgnoreCase("tuffx")) {
-            if (args.length > 0 && args[0].equalsIgnoreCase("mute")) {
-                if (!sender.hasPermission("tuffx.mute")) {
-                    sender.sendMessage(ChatColor.RED + "You don't have permission to use this command.");
-                    return true;
-                }
-                isMuted = !isMuted;
-                String status = isMuted ? ChatColor.RED + "MUTED" : ChatColor.GREEN + "UNMUTED";
-                sender.sendMessage(ChatColor.GOLD + "[TuffX] " + ChatColor.YELLOW + "Console output is now " + status + ".");
-                return true;
-            }
-            sender.sendMessage(ChatColor.GOLD + "[TuffX] Usage: /tuffx mute");
+        if (!command.getName().equalsIgnoreCase("tuffx")) {
+            return false;
+        }
+
+        if (args.length == 0) {
+            handleHelpCommand(sender);
             return true;
         }
-        return false;
+
+        switch (args[0].toLowerCase()) {
+            case "mute":
+                handleMuteCommand(sender);
+                break;
+            case "reload":
+                handleReloadCommand(sender);
+                break;
+            case "reloadchunks":
+                handleReloadChunksCommand(sender);
+                break;
+            case "help":
+                handleHelpCommand(sender);
+                break;
+            default:
+                sender.sendMessage(ChatColor.GOLD + "[TuffX] " + ChatColor.RED + "Unknown subcommand. Use /tuffx help.");
+                break;
+        }
+        return true;
+    }
+
+    @Override
+    public List<String> onTabComplete(CommandSender sender, Command command, String alias, String[] args) {
+        if (command.getName().equalsIgnoreCase("tuffx")) {
+            if (args.length == 1) {
+                List<String> subcommands = new ArrayList<>();
+                if (sender.hasPermission("tuffx.mute")) subcommands.add("mute");
+                if (sender.hasPermission("tuffx.reload")) subcommands.add("reload");
+                if (sender.hasPermission("tuffx.reloadchunks")) subcommands.add("reloadchunks");
+                if (sender.hasPermission("tuffx.help")) subcommands.add("help");
+
+                return subcommands.stream()
+                        .filter(s -> s.toLowerCase().startsWith(args[0].toLowerCase()))
+                        .collect(Collectors.toList());
+            }
+        }
+        return Collections.emptyList();
+    }
+
+    private void handleMuteCommand(CommandSender sender) {
+        if (!sender.hasPermission("tuffx.mute")) {
+            sender.sendMessage(ChatColor.RED + "You don't have permission to use this command.");
+            return;
+        }
+        isMuted = !isMuted;
+        String status = isMuted ? ChatColor.RED + "MUTED" : ChatColor.GREEN + "UNMUTED";
+        sender.sendMessage(ChatColor.GOLD + "[TuffX] " + ChatColor.YELLOW + "Console output is now " + status + ".");
+    }
+
+    private void handleReloadCommand(CommandSender sender) {
+        if (!sender.hasPermission("tuffx.reload")) {
+            sender.sendMessage(ChatColor.RED + "You don't have permission to use this command.");
+            return;
+        }
+        sender.sendMessage(ChatColor.GOLD + "[TuffX] " + ChatColor.YELLOW + "Reloading TuffX...");
+        onDisable();
+        onEnable();
+        sender.sendMessage(ChatColor.GOLD + "[TuffX] " + ChatColor.GREEN + "Reload complete.");
+    }
+
+    private void handleReloadChunksCommand(CommandSender sender) {
+        if (!sender.hasPermission("tuffx.reloadchunks")) {
+            sender.sendMessage(ChatColor.RED + "You don't have permission to use this command.");
+            return;
+        }
+        sender.sendMessage(ChatColor.GOLD + "[TuffX] " + ChatColor.YELLOW + "Clearing chunk cache and resending to all players...");
+        sentSections.clear();
+
+        for (Player player : getServer().getOnlinePlayers()) {
+            Chunk playerChunk = player.getLocation().getChunk();
+            int viewDistance = getServer().getViewDistance();
+            World world = player.getWorld();
+
+            for (int x = -viewDistance; x <= viewDistance; x++) {
+                for (int z = -viewDistance; z <= viewDistance; z++) {
+                    if (world.isChunkLoaded(playerChunk.getX() + x, playerChunk.getZ() + z)) {
+                        Chunk chunk = world.getChunkAt(playerChunk.getX() + x, playerChunk.getZ() + z);
+                        sendChunkSectionsAsync(player, chunk);
+                    }
+                }
+            }
+        }
+        sender.sendMessage(ChatColor.GOLD + "[TuffX] " + ChatColor.GREEN + "Chunk reload initiated for all online players. Reload is complete.");
+    }
+
+    private void handleHelpCommand(CommandSender sender) {
+        sender.sendMessage(ChatColor.GOLD + "--- TuffX Commands ---");
+        if (sender.hasPermission("tuffx.help")) {
+            sender.sendMessage(ChatColor.YELLOW + "/tuffx help" + ChatColor.GRAY + " - Shows this help message.");
+        }
+        if (sender.hasPermission("tuffx.mute")) {
+            sender.sendMessage(ChatColor.YELLOW + "/tuffx mute" + ChatColor.GRAY + " - Toggles console logging for the plugin.");
+        }
+        if (sender.hasPermission("tuffx.reload")) {
+            sender.sendMessage(ChatColor.YELLOW + "/tuffx reload" + ChatColor.GRAY + " - Reloads the TuffX plugin.");
+        }
+        if (sender.hasPermission("tuffx.reloadchunks")) {
+            sender.sendMessage(ChatColor.YELLOW + "/tuffx reloadchunks" + ChatColor.GRAY + " - Resends below y0 chunks to players.");
+        }
+        sender.sendMessage(ChatColor.GOLD + "----------------------");
     }
 
     private void logFancyEnable() {
@@ -95,7 +193,9 @@ public class TuffX extends JavaPlugin implements Listener, PluginMessageListener
 
     @Override
     public void onPluginMessageReceived(String channel, Player player, byte[] message) {
-        if (!channel.equals(CHANNEL)) { return; }
+        if (!channel.equals(CHANNEL)) {
+            return;
+        }
 
         try (ByteArrayInputStream bin = new ByteArrayInputStream(message); DataInputStream in = new DataInputStream(bin)) {
             int x = in.readInt();
@@ -113,7 +213,8 @@ public class TuffX extends JavaPlugin implements Listener, PluginMessageListener
                 }
             }.runTask(this);
         } catch (IOException e) {
-            if (!isMuted) getLogger().warning("Failed to parse plugin message from " + player.getName() + ": " + e.getMessage());
+            if (!isMuted)
+                getLogger().warning("Failed to parse plugin message from " + player.getName() + ": " + e.getMessage());
         }
     }
 
@@ -303,12 +404,14 @@ public class TuffX extends JavaPlugin implements Listener, PluginMessageListener
                             }
                         }.runTask(TuffX.this);
                     } catch (IOException e) {
-                        if (!isMuted) getLogger().severe("Failed to create payload for chunk section: " + key + " | " + e.getMessage());
+                        if (!isMuted)
+                            getLogger().severe("Failed to create payload for chunk section: " + key + " | " + e.getMessage());
                     }
                 }
             }
         }.runTaskAsynchronously(this);
     }
 
-    private record ChunkSectionKey(UUID playerId, String worldName, int cx, int cz, int sectionY) {}
+    private record ChunkSectionKey(UUID playerId, String worldName, int cx, int cz, int sectionY) {
+    }
 }
