@@ -391,7 +391,7 @@ public class TuffX extends JavaPlugin implements Listener, PluginMessageListener
                 for (int sectionY = -4; sectionY < 0; sectionY++) {
                     ChunkSectionKey key = new ChunkSectionKey(uid, worldName, cx, cz, sectionY);
                     if (sentSections.contains(key)) {
-                        getLogger().info("Skipping already-sent section: " + key);
+                        //getLogger().info("Skipping already-sent section: " + key);
                         continue;
                     }
                     try {
