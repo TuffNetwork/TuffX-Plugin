@@ -1,52 +1,23 @@
 package net.potato.tuff;
 
-import org.bukkit.ChatColor;
-import org.bukkit.command.Command;
-import org.bukkit.command.CommandSender;
-import org.bukkit.command.TabCompleter;
-import org.bukkit.Chunk;
-import org.bukkit.GameMode;
-import org.bukkit.Location;
-import org.bukkit.Material;
-import org.bukkit.World;
+import org.bukkit.*;
 import org.bukkit.block.Block;
+import org.bukkit.command.*;
 import org.bukkit.entity.Player;
-import org.bukkit.event.EventHandler;
-import org.bukkit.event.EventPriority;
-import org.bukkit.event.Listener;
-import org.bukkit.event.block.Action;
-import org.bukkit.event.player.PlayerInteractEvent;
-import org.bukkit.event.player.PlayerJoinEvent;
-import org.bukkit.event.player.PlayerQuitEvent;
-import org.bukkit.event.player.PlayerTeleportEvent;
-import org.bukkit.event.player.PlayerTeleportEvent.TeleportCause;
+import org.bukkit.event.*;
+import org.bukkit.event.block.*;
+import org.bukkit.event.player.*;
 import org.bukkit.event.world.ChunkLoadEvent;
 import org.bukkit.inventory.ItemStack;
 import org.bukkit.plugin.java.JavaPlugin;
 import org.bukkit.plugin.messaging.PluginMessageListener;
 import org.bukkit.scheduler.BukkitRunnable;
 
-import java.io.ByteArrayInputStream;
-import java.io.ByteArrayOutputStream;
-import java.io.DataInputStream;
-import java.io.DataOutputStream;
-import java.io.IOException;
+import java.io.*;
 import java.nio.charset.StandardCharsets;
-import java.util.ArrayList;
-import java.util.Collections;
-import java.util.List;
-import java.util.Set;
-import java.util.UUID;
+import java.util.*;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.stream.Collectors;
-
-import org.bukkit.event.block.BlockBreakEvent;
-import org.bukkit.event.block.BlockPlaceEvent;
-import org.bukkit.event.block.BlockPhysicsEvent;
-import org.bukkit.event.EventPriority;
-
-import org.bukkit.ChunkSnapshot;
-import org.bukkit.Chunk;
 
 public class TuffX extends JavaPlugin implements Listener, PluginMessageListener, TabCompleter {
 
@@ -66,50 +37,39 @@ public class TuffX extends JavaPlugin implements Listener, PluginMessageListener
     }
 
     @Override
-    public boolean onCommand(CommandSender sender, Command command, String label, String[] args) {
-        if (!command.getName().equalsIgnoreCase("tuffx")) {
-            return false;
-        }
+    public void onDisable() {
+        getServer().getMessenger().unregisterOutgoingPluginChannel(this);
+        getServer().getMessenger().unregisterIncomingPluginChannel(this);
+        sentSections.clear();
+        if (!isMuted) getLogger().info("TuffX disabled");
+    }
 
+    @Override
+    public boolean onCommand(CommandSender sender, Command command, String label, String[] args) {
+        if (!command.getName().equalsIgnoreCase("tuffx")) return false;
         if (args.length == 0) {
             handleHelpCommand(sender);
             return true;
         }
-
         switch (args[0].toLowerCase()) {
-            case "mute":
-                handleMuteCommand(sender);
-                break;
-            case "reload":
-                handleReloadCommand(sender);
-                break;
-            case "reloadchunks":
-                handleReloadChunksCommand(sender);
-                break;
-            case "help":
-                handleHelpCommand(sender);
-                break;
-            default:
-                sender.sendMessage(ChatColor.GOLD + "[TuffX] " + ChatColor.RED + "Unknown subcommand. Use /tuffx help.");
-                break;
+            case "mute" -> handleMuteCommand(sender);
+            case "reload" -> handleReloadCommand(sender);
+            case "reloadchunks" -> handleReloadChunksCommand(sender);
+            case "help" -> handleHelpCommand(sender);
+            default -> sender.sendMessage(ChatColor.GOLD + "[TuffX] " + ChatColor.RED + "Unknown subcommand. Use /tuffx help.");
         }
         return true;
     }
 
     @Override
     public List<String> onTabComplete(CommandSender sender, Command command, String alias, String[] args) {
-        if (command.getName().equalsIgnoreCase("tuffx")) {
-            if (args.length == 1) {
-                List<String> subcommands = new ArrayList<>();
-                if (sender.hasPermission("tuffx.mute")) subcommands.add("mute");
-                if (sender.hasPermission("tuffx.reload")) subcommands.add("reload");
-                if (sender.hasPermission("tuffx.reloadchunks")) subcommands.add("reloadchunks");
-                if (sender.hasPermission("tuffx.help")) subcommands.add("help");
-
-                return subcommands.stream()
-                        .filter(s -> s.toLowerCase().startsWith(args[0].toLowerCase()))
-                        .collect(Collectors.toList());
-            }
+        if (command.getName().equalsIgnoreCase("tuffx") && args.length == 1) {
+            List<String> subcommands = new ArrayList<>();
+            if (sender.hasPermission("tuffx.mute")) subcommands.add("mute");
+            if (sender.hasPermission("tuffx.reload")) subcommands.add("reload");
+            if (sender.hasPermission("tuffx.reloadchunks")) subcommands.add("reloadchunks");
+            if (sender.hasPermission("tuffx.help")) subcommands.add("help");
+            return subcommands.stream().filter(s -> s.startsWith(args[0].toLowerCase())).collect(Collectors.toList());
         }
         return Collections.emptyList();
     }
@@ -129,10 +89,10 @@ public class TuffX extends JavaPlugin implements Listener, PluginMessageListener
             sender.sendMessage(ChatColor.RED + "You don't have permission to use this command.");
             return;
         }
-        sender.sendMessage(ChatColor.GOLD + "[TuffX] " + ChatColor.YELLOW + "Reloading TuffX...");
+        sender.sendMessage(ChatColor.GOLD + "[TuffX] Reloading...");
         onDisable();
         onEnable();
-        sender.sendMessage(ChatColor.GOLD + "[TuffX] " + ChatColor.GREEN + "Reload complete.");
+        sender.sendMessage(ChatColor.GOLD + "[TuffX] Reload complete.");
     }
 
     private void handleReloadChunksCommand(CommandSender sender) {
@@ -140,40 +100,97 @@ public class TuffX extends JavaPlugin implements Listener, PluginMessageListener
             sender.sendMessage(ChatColor.RED + "You don't have permission to use this command.");
             return;
         }
-        sender.sendMessage(ChatColor.GOLD + "[TuffX] " + ChatColor.YELLOW + "Clearing chunk cache and resending to all players...");
+        sender.sendMessage(ChatColor.GOLD + "[TuffX] Clearing chunk cache and resending...");
         sentSections.clear();
-
         for (Player player : getServer().getOnlinePlayers()) {
             Chunk playerChunk = player.getLocation().getChunk();
             int viewDistance = getServer().getViewDistance();
             World world = player.getWorld();
-
             for (int x = -viewDistance; x <= viewDistance; x++) {
                 for (int z = -viewDistance; z <= viewDistance; z++) {
                     if (world.isChunkLoaded(playerChunk.getX() + x, playerChunk.getZ() + z)) {
-                        Chunk chunk = world.getChunkAt(playerChunk.getX() + x, playerChunk.getZ() + z);
-                        sendChunkSectionsAsync(player, chunk);
+                        sendChunkSectionsAsync(player, world.getChunkAt(playerChunk.getX() + x, playerChunk.getZ() + z));
                     }
                 }
             }
         }
-        sender.sendMessage(ChatColor.GOLD + "[TuffX] " + ChatColor.GREEN + "Chunk reload initiated for all online players. Reload is complete.");
+        sender.sendMessage(ChatColor.GOLD + "[TuffX] Chunk reload complete.");
     }
+
+    private byte[] createSectionPayload(World world, int cx, int cz, int sectionY) throws IOException {
+        Chunk chunk = world.getChunkAt(cx, cz);
+        ChunkSnapshot snapshot = chunk.getChunkSnapshot(true, false, false);
+        try (ByteArrayOutputStream bout = new ByteArrayOutputStream(8200);
+             DataOutputStream out = new DataOutputStream(bout)) {
+            out.writeUTF("chunk_data");
+            out.writeInt(cx);
+            out.writeInt(cz);
+            out.writeInt(sectionY);
+            int baseY = sectionY * 16;
+            for (int y = 0; y < 16; y++) {
+                int worldY = baseY + y;
+                for (int z = 0; z < 16; z++) {
+                    for (int x = 0; x < 16; x++) {
+                        Material type;
+                        if (worldY >= world.getMinHeight() && worldY < world.getMaxHeight()) {
+                            try {
+                                type = snapshot.getBlockType(x, worldY, z);
+                            } catch (Exception e) {
+                                type = Material.AIR;
+                            }
+                        } else {
+                            type = Material.AIR;
+                        }
+                        out.writeShort(LegacyBlockIdManager.getLegacyShort(type));
+                    }
+                }
+            }
+            return bout.toByteArray();
+        }
+    }
+
+    private void sendChunkSectionsAsync(Player player, Chunk chunk) {
+        new BukkitRunnable() {
+            @Override
+            public void run() {
+                int cx = chunk.getX();
+                int cz = chunk.getZ();
+                UUID uid = player.getUniqueId();
+                String worldName = chunk.getWorld().getName();
+                World world = chunk.getWorld();
+
+                int minSectionY = Math.max(world.getMinHeight() >> 4, -4);
+                int maxSectionY = 0;
+                for (int sectionY = minSectionY; sectionY < maxSectionY; sectionY++) {
+                    ChunkSectionKey key = new ChunkSectionKey(uid, worldName, cx, cz, sectionY);
+                    if (sentSections.contains(key)) continue;
+                    try {
+                        byte[] payload = createSectionPayload(world, cx, cz, sectionY);
+                        new BukkitRunnable() {
+                            @Override
+                            public void run() {
+                                if (player.isOnline()) {
+                                    player.sendPluginMessage(TuffX.this, CHANNEL, payload);
+                                    sentSections.add(key);
+                                }
+                            }
+                        }.runTask(TuffX.this);
+                    } catch (IOException e) {
+                        if (!isMuted) getLogger().severe("Failed to create section payload: " + key);
+                    }
+                }
+            }
+        }.runTaskAsynchronously(this);
+    }
+
+    private record ChunkSectionKey(UUID playerId, String worldName, int cx, int cz, int sectionY) {}
 
     private void handleHelpCommand(CommandSender sender) {
         sender.sendMessage(ChatColor.GOLD + "--- TuffX Commands ---");
-        if (sender.hasPermission("tuffx.help")) {
-            sender.sendMessage(ChatColor.YELLOW + "/tuffx help" + ChatColor.GRAY + " - Shows this help message.");
-        }
-        if (sender.hasPermission("tuffx.mute")) {
-            sender.sendMessage(ChatColor.YELLOW + "/tuffx mute" + ChatColor.GRAY + " - Toggles console logging for the plugin.");
-        }
-        if (sender.hasPermission("tuffx.reload")) {
-            sender.sendMessage(ChatColor.YELLOW + "/tuffx reload" + ChatColor.GRAY + " - Reloads the TuffX plugin.");
-        }
-        if (sender.hasPermission("tuffx.reloadchunks")) {
-            sender.sendMessage(ChatColor.YELLOW + "/tuffx reloadchunks" + ChatColor.GRAY + " - Resends below y0 chunks to players.");
-        }
+        if (sender.hasPermission("tuffx.help")) sender.sendMessage(ChatColor.YELLOW + "/tuffx help" + ChatColor.GRAY + " - Shows help message");
+        if (sender.hasPermission("tuffx.mute")) sender.sendMessage(ChatColor.YELLOW + "/tuffx mute" + ChatColor.GRAY + " - Toggles plugin logging");
+        if (sender.hasPermission("tuffx.reload")) sender.sendMessage(ChatColor.YELLOW + "/tuffx reload" + ChatColor.GRAY + " - Reload plugin");
+        if (sender.hasPermission("tuffx.reloadchunks")) sender.sendMessage(ChatColor.YELLOW + "/tuffx reloadchunks" + ChatColor.GRAY + " - Resend chunks");
         sender.sendMessage(ChatColor.GOLD + "----------------------");
     }
 
