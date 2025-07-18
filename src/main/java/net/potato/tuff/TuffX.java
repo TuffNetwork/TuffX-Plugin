@@ -40,11 +40,14 @@ import java.util.Set;
 import java.util.UUID;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.stream.Collectors;
+import java.util.Map;
+import java.util.HashMap;
 
 import org.bukkit.event.block.BlockBreakEvent;
 import org.bukkit.event.block.BlockPlaceEvent;
 import org.bukkit.event.block.BlockPhysicsEvent;
 import org.bukkit.event.EventPriority;
+import org.bukkit.event.player.PlayerMoveEvent;
 
 import org.bukkit.ChunkSnapshot;
 import org.bukkit.Chunk;
@@ -55,6 +58,7 @@ public class TuffX extends JavaPlugin implements Listener, PluginMessageListener
     public static final String CHANNEL = "eagler:below_y0";
     private final Set<ChunkSectionKey> sentSections = Collections.newSetFromMap(new ConcurrentHashMap<>());
     private boolean isMuted = false;
+    private final Map<UUID, Chunk> playerLastChunk = new HashMap<>();
 
     @Override
     public void onEnable() {
@@ -415,6 +419,29 @@ public class TuffX extends JavaPlugin implements Listener, PluginMessageListener
 
     @EventHandler(priority = EventPriority.HIGHEST)
     public void onPlayerTeleport(PlayerTeleportEvent event) {
+        Player player = event.getPlayer();
+        int viewDistance = getServer().getViewDistance();
+        World world = player.getWorld();
+        Chunk newChunk = event.getTo().getChunk();
+
+        for (int dx = -viewDistance; dx <= viewDistance; dx++) {
+            for (int dz = -viewDistance; dz <= viewDistance; dz++) {
+                int chunkX = newChunk.getX() + dx;
+                int chunkZ = newChunk.getZ() + dz;
+
+                if (!world.isChunkLoaded(chunkX, chunkZ)) continue;
+
+                ChunkSectionKey key = new ChunkSectionKey(
+                    player.getUniqueId(), world.getName(), chunkX, chunkZ, -1
+                );
+
+                if (sentSections.contains(key)) continue;
+
+                Chunk chunk = world.getChunkAt(chunkX, chunkZ);
+                sendChunkSectionsAsync(player, chunk);
+            }
+        }
+
         if (event.getCause() == TeleportCause.UNKNOWN && event.getFrom().getY() < 0) {
             if (event.getPlayer().getGameMode() != GameMode.CREATIVE && event.getPlayer().getGameMode() != GameMode.SPECTATOR) {
                 event.setCancelled(true);
@@ -458,6 +485,50 @@ public class TuffX extends JavaPlugin implements Listener, PluginMessageListener
                 }
             }
         }.runTaskLater(this, 1L);
+    }
+
+    @EventHandler
+    public void onPlayerMove(PlayerMoveEvent event) {
+        Player player = event.getPlayer();
+        Location to = event.getTo();
+        if (to == null) return;
+
+        Chunk newChunk = to.getChunk();
+        Chunk lastChunk = playerLastChunk.get(player.getUniqueId());
+
+        if (lastChunk != null &&
+            lastChunk.getX() == newChunk.getX() &&
+            lastChunk.getZ() == newChunk.getZ() &&
+            lastChunk.getWorld().equals(newChunk.getWorld())) {
+            return;
+        }
+
+        playerLastChunk.put(player.getUniqueId(), newChunk);
+
+        //sentSections.clear();
+
+        int viewDistance = getServer().getViewDistance();
+        World world = player.getWorld();
+
+        //player.sendMessage("sending to all players...");
+
+        for (int dx = -viewDistance; dx <= viewDistance; dx++) {
+            for (int dz = -viewDistance; dz <= viewDistance; dz++) {
+                int chunkX = newChunk.getX() + dx;
+                int chunkZ = newChunk.getZ() + dz;
+
+                if (!world.isChunkLoaded(chunkX, chunkZ)) continue;
+
+                ChunkSectionKey key = new ChunkSectionKey(
+                    player.getUniqueId(), world.getName(), chunkX, chunkZ, -1
+                );
+
+                if (sentSections.contains(key)) continue;
+
+                Chunk chunk = world.getChunkAt(chunkX, chunkZ);
+                sendChunkSectionsAsync(player, chunk);
+            }
+        }
     }
 
     @EventHandler(priority = EventPriority.MONITOR, ignoreCancelled = true)
@@ -553,59 +624,6 @@ public class TuffX extends JavaPlugin implements Listener, PluginMessageListener
                     sendChunkSectionsAsync(p, chunk);
                 }
             }
-        }
-    }
-
-    @EventHandler(priority = EventPriority.HIGHEST, ignoreCancelled = true)
-    public void onEntitySpawn(org.bukkit.event.entity.EntitySpawnEvent event) {
-        Location loc = event.getEntity().getLocation();
-        if (loc.getY() < 0) {
-            sendFakeEntitySpawn(event.getEntity());
-        }
-    }
-
-    private List<Player> getNearbyPlayers(World world, Location loc, double radius) {
-        double radiusSquared = radius * radius;
-        return world.getPlayers().stream()
-                .filter(p -> p.getLocation().distanceSquared(loc) <= radiusSquared)
-                .toList();
-    }
-
-    private void sendEntityUpdateToNearby(Entity entity, byte[] payload) {
-        Location loc = entity.getLocation();
-        double radius = 64;
-        List<Player> nearbyPlayers = getNearbyPlayers(entity.getWorld(), loc, radius);
-
-        for (Player player : nearbyPlayers) {
-            player.sendPluginMessage(this, CHANNEL, payload);
-        }
-    }
-
-    private void sendFakeEntitySpawn(org.bukkit.entity.Entity entity) {
-        ByteArrayOutputStream bout = new ByteArrayOutputStream();
-        DataOutputStream out = new DataOutputStream(bout);
-
-        try {
-            out.writeUTF("entity_spawn");
-            out.writeInt(entity.getEntityId());
-            out.writeUTF(entity.getType().name());
-            Location loc = entity.getLocation();
-            out.writeDouble(loc.getX());
-            out.writeDouble(loc.getY());
-            out.writeDouble(loc.getZ());
-            if (entity instanceof org.bukkit.entity.FallingBlock) {
-                org.bukkit.entity.FallingBlock fb = (org.bukkit.entity.FallingBlock) entity;
-                out.writeShort(LegacyBlockIdManager.getLegacyShort(fb.getBlockData().getMaterial()));
-            } else if (entity instanceof org.bukkit.entity.Item) {
-                org.bukkit.entity.Item item = (org.bukkit.entity.Item) entity;
-                ItemStack stack = item.getItemStack();
-                out.writeShort(LegacyBlockIdManager.getLegacyShort(stack.getType()));
-                out.writeInt(stack.getAmount());
-            }
-            sendEntityUpdateToNearby(entity,bout.toByteArray());
-            out.flush();
-        } catch (IOException e) {
-            getLogger().warning("Failed to send fake entity spawn: " + e.getMessage());
         }
     }
 }
