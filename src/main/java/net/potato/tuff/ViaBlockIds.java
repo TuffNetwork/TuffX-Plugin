@@ -102,12 +102,8 @@ public class ViaBlockIds {
             for (int i = 0; i < states.size(); i++) {
                 String key = states.get(i).replace("minecraft:", "");
                 int[] legacy;
-                if (key.equals("void_air")){
-                    Bukkit.getLogger().info("[TuffX] Void_air found!");
-                    legacy = convertToLegacy(i,true);
-                } else {
-                    legacy = convertToLegacy(i,false);
-                }
+                legacy = convertToLegacy(i);
+                
                 newLegacyMap.put(key, legacy);
             }
 
@@ -150,37 +146,36 @@ public class ViaBlockIds {
         }
     }
 
-    public int[] convertToLegacy(int modernBlockStateId, boolean debug) {
-        if (debug) Bukkit.getLogger().info("[TuffX] Tracking void_air...");
+    public int[] convertToLegacy(int modernBlockStateId) {
         ProtocolVersion serverProtocol = Via.getAPI().getServerVersion().highestSupportedProtocolVersion();
         ProtocolVersion clientProtocol = ProtocolVersion.v1_12_2;
 
         List<ProtocolPathEntry> path = Via.getManager()
             .getProtocolManager()
             .getProtocolPath(
-                serverProtocol.getVersion(),
-                clientProtocol.getVersion()
+                clientProtocol.getVersion(),
+                serverProtocol.getVersion()
             );
 
         if (path == null) {
-            Bukkit.getLogger().warning("[TuffX] No backwards protocol path found from " + serverProtocol.getName() + " to " + clientProtocol.getName() + "!");
+            if (debug) Bukkit.getLogger().warning("[TuffX] Protocol path came back as NULL. Is ViaBackwards installed?");
             return new int[]{1, 0};
         }
-
+        
         int currentStateId = modernBlockStateId;
 
-        if (debug) Bukkit.getLogger().info("[TuffX] Void_air modern blockstate id: "+modernBlockStateId);
-
-        for (ProtocolPathEntry entry : path) {
+        for (int i = path.size() - 1; i >= 0; i--) {
+            ProtocolPathEntry entry = path.get(i);
             Protocol protocol = entry.protocol();
+
             if (protocol instanceof BackwardsProtocol) {
                 BackwardsMappingData mappingData = ((BackwardsProtocol) protocol).getMappingData();
                 if (mappingData != null && mappingData.getBlockStateMappings() != null) {
-                    if (debug) Bukkit.getLogger().info("[TuffX] Void_air mappingData isn't null!");
-                    int newid=mappingData.getBlockStateMappings().getNewId(currentStateId);
-                    if (debug) Bukkit.getLogger().info("[TuffX] Void_air new id is "+newid);
-                    if (newid!=-1)
+                    int newid = mappingData.getBlockStateMappings().getNewId(currentStateId);
+
+                    if (newid != -1) {
                         currentStateId = newid;
+                    }
                 }
             }
         }
@@ -188,8 +183,6 @@ public class ViaBlockIds {
         int blockId = currentStateId >> 4;
         int meta = currentStateId & 0xF;
 
-        if (debug) Bukkit.getLogger().info("[TuffX] Void_air final id is "+currentStateId+" ("+blockId+":"+meta+")");
-
-        return new int[]{ blockId, meta };
+        return new int[]{blockId, meta};
     }
 }
