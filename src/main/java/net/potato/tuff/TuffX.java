@@ -129,16 +129,18 @@ public class TuffX extends JavaPlugin implements Listener, PluginMessageListener
     private void processAndSendChunk(final Player player, final Chunk chunk) {
         if (chunk == null || !player.isOnline()) return;
 
-        final ChunkSnapshot snapshot = chunk.getChunkSnapshot(true, false, false);
+        final Map<BlockData, int[]> conversionCache = new HashMap<>();
 
         new BukkitRunnable() {
             @Override
             public void run() {
+                final ChunkSnapshot snapshot = chunk.getChunkSnapshot(true, false, false);
+
                 for (int sectionY = -4; sectionY < 0; sectionY++) {
                     if (!player.isOnline()) break; 
                     
                     try {
-                        byte[] payload = createSectionPayload(snapshot, chunk.getX(), chunk.getZ(), sectionY);
+                        byte[] payload = createSectionPayload(snapshot, chunk.getX(), chunk.getZ(), sectionY, conversionCache);
                         if (payload != null) {
                             player.sendPluginMessage(TuffX.this, CHANNEL, payload);
                         }
@@ -164,7 +166,7 @@ public class TuffX extends JavaPlugin implements Listener, PluginMessageListener
         } catch (IOException e) { return null; }
     }
     
-    private byte[] createSectionPayload(ChunkSnapshot snapshot, int cx, int cz, int sectionY) throws IOException {
+    private byte[] createSectionPayload(ChunkSnapshot snapshot, int cx, int cz, int sectionY, Map<BlockData, int[]> cache) throws IOException {
         try (ByteArrayOutputStream bout = new ByteArrayOutputStream(8200); DataOutputStream out = new DataOutputStream(bout)) {
             out.writeUTF("chunk_data");
             out.writeInt(cx); out.writeInt(cz); out.writeInt(sectionY);
@@ -172,8 +174,10 @@ public class TuffX extends JavaPlugin implements Listener, PluginMessageListener
             int baseY = sectionY * 16;
             for (int y = 0; y < 16; y++) for (int z = 0; z < 16; z++) for (int x = 0; x < 16; x++) {
                 int worldY = baseY + y;
-                String blockKey = snapshot.getBlockData(x, worldY, z).getAsString().replace("minecraft:", "");
-                int[] legacyData = viablockids.toLegacy(blockKey);
+                BlockData blockData = snapshot.getBlockData(x, worldY, z);
+
+                int[] legacyData = cache.computeIfAbsent(blockData, viablockids::toLegacy);
+
                 if (legacyData[0] != 0) hasNonAirBlock = true;
                 out.writeShort((short) ((legacyData[1] << 12) | (legacyData[0] & 0xFFF)));
             }
@@ -181,10 +185,10 @@ public class TuffX extends JavaPlugin implements Listener, PluginMessageListener
         }
     }
     
-    //@EventHandler(priority = EventPriority.MONITOR, ignoreCancelled = true)
-    //public void onBlockBreak(BlockBreakEvent event) { if (event.getBlock().getY() < 0) sendBlockUpdateToNearby(event.getBlock().getLocation(), Material.AIR.createBlockData()); }
-    //@EventHandler(priority = EventPriority.MONITOR, ignoreCancelled = true)
-    //public void onBlockPlace(BlockPlaceEvent event) { if (event.getBlock().getY() < 0) sendBlockUpdateToNearby(event.getBlock().getLocation(), event.getBlock().getBlockData()); }
+    @EventHandler(priority = EventPriority.MONITOR, ignoreCancelled = true)
+    public void onBlockBreak(BlockBreakEvent event) { if (event.getBlock().getY() < 0) sendBlockUpdateToNearby(event.getBlock().getLocation(), Material.AIR.createBlockData()); }
+    @EventHandler(priority = EventPriority.MONITOR, ignoreCancelled = true)
+    public void onBlockPlace(BlockPlaceEvent event) { if (event.getBlock().getY() < 0) sendBlockUpdateToNearby(event.getBlock().getLocation(), event.getBlock().getBlockData()); }
     @EventHandler(priority = EventPriority.MONITOR, ignoreCancelled = true)
     public void onBlockPhysics(BlockPhysicsEvent event) { if (event.getBlock().getY() < 0) sendBlockUpdateToNearby(event.getBlock().getLocation(), event.getBlock().getBlockData()); }
 
