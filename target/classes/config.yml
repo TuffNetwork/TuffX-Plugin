@@ -1,1 +1,4 @@
-#no config
+#debug mode
+debug-mode: false
+#amount of chunks to send per tick to players
+chunks-per-tick: 6

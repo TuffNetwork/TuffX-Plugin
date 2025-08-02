@@ -39,7 +39,7 @@ public class TuffX extends JavaPlugin implements Listener, PluginMessageListener
     public static final String CHANNEL = "eagler:below_y0";
     public ViaBlockIds viablockids;
 
-    private static final int CHUNKS_PER_TICK = 2;
+    private static int CHUNKS_PER_TICK;
 
     private final Map<UUID, Queue<Vector>> requestQueue = new ConcurrentHashMap<>();
     
@@ -48,12 +48,18 @@ public class TuffX extends JavaPlugin implements Listener, PluginMessageListener
 
     private BukkitTask processorTask;
 
+    private boolean debug;
+
     private void logDebug(String message) {
-        getLogger().log(Level.INFO, "[TuffX-Debug] " + message);
+        if (debug) getLogger().log(Level.INFO, "[TuffX-Debug] " + message);
     }
 
     @Override
     public void onEnable() {
+        saveDefaultConfig();
+        this.CHUNKS_PER_TICK = getConfig().getInt("chunks-per-tick", 6);
+        this.debug = getConfig().getBoolean("debug-mode", false);
+
         getServer().getMessenger().registerOutgoingPluginChannel(this, CHANNEL);
         getServer().getMessenger().registerIncomingPluginChannel(this, CHANNEL, this);
         getServer().getPluginManager().registerEvents(this, this);
