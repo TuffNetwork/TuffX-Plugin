@@ -140,8 +140,12 @@ public class TuffX extends JavaPlugin implements Listener, PluginMessageListener
                 break;
             case "ready":
                 logDebug("Player " + player.getName() + " is READY. Awaiting first chunk batch...");
-                awaitingInitialBatch.add(player.getUniqueId());
-                player.sendPluginMessage(this, CHANNEL, createBelowY0StatusPayload(true));
+                if (enabledWorlds.contains(player.getWorld().getName())) {
+                    awaitingInitialBatch.add(player.getUniqueId());
+                    player.sendPluginMessage(this, CHANNEL, createBelowY0StatusPayload(true));
+                } else {
+                    logDebug("Not a supported world!");
+                }
                 break;
             case "use_on_block":
                 new BukkitRunnable() {
@@ -160,6 +164,13 @@ public class TuffX extends JavaPlugin implements Listener, PluginMessageListener
         try (ByteArrayOutputStream bout = new ByteArrayOutputStream(); DataOutputStream out = new DataOutputStream(bout)) {
             out.writeUTF("belowy0_status");
             out.writeBoolean(status);
+            return bout.toByteArray();
+        } catch (IOException e) { return null; }
+    }
+
+    private byte[] createDimensionPayload() {
+        try (ByteArrayOutputStream bout = new ByteArrayOutputStream(); DataOutputStream out = new DataOutputStream(bout)) {
+            out.writeUTF("dimension_change");
             return bout.toByteArray();
         } catch (IOException e) { return null; }
     }
@@ -200,17 +211,18 @@ public class TuffX extends JavaPlugin implements Listener, PluginMessageListener
         UUID playerId = player.getUniqueId();
 
         Queue<Vector> playerQueue = requestQueue.get(playerId);
-
         if (playerQueue != null && !playerQueue.isEmpty()) {
-            logDebug("Player " + player.getName() + " changed worlds. Clearing " + playerQueue.size() + " pending chunk requests from their old world.");
+            logDebug("Player " + player.getName() + " changed worlds. Clearing " + playerQueue.size() + " pending chunk requests.");
             playerQueue.clear();
         }
         
-        if (awaitingInitialBatch.remove(playerId)) {
-            logDebug("Player " + player.getName() + " changed worlds during initial load. Cancelling.");
+        if (initialChunksToProcess.remove(playerId) != null) {
+            logDebug("Player " + player.getName() + " was in the middle of an initial chunk load. The process has been cancelled.");
+            awaitingInitialBatch.remove(playerId);
             player.sendPluginMessage(this, CHANNEL, createLoadFinishedPayload());
-            initialChunksToProcess.remove(playerId);
         }
+
+        player.sendPluginMessage(this, CHANNEL, createDimensionPayload());
     }
 
     private void processAndSendChunk(final Player player, final Chunk chunk) {
