@@ -1,4 +1,9 @@
 #debug mode
 debug-mode: false
+
 #amount of chunks to send per tick to players
 chunks-per-tick: 6
+
+#worlds for y0 to be enabled in (experimental)
+enabled-worlds:
+    - 'world'

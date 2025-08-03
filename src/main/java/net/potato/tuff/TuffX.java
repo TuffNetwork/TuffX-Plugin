@@ -24,6 +24,7 @@ import org.bukkit.scheduler.BukkitTask;
 import org.bukkit.util.Vector;
 import org.bukkit.event.block.BlockPhysicsEvent;
 import org.bukkit.event.player.PlayerTeleportEvent;
+import org.bukkit.event.player.PlayerChangedWorldEvent;
 
 import java.io.*;
 import java.nio.charset.StandardCharsets;
@@ -45,6 +46,7 @@ public class TuffX extends JavaPlugin implements Listener, PluginMessageListener
     
     private final Set<UUID> awaitingInitialBatch = ConcurrentHashMap.newKeySet();
     private final Map<UUID, AtomicInteger> initialChunksToProcess = new ConcurrentHashMap<>();
+    private Set<String> enabledWorlds;
 
     private BukkitTask processorTask;
 
@@ -59,6 +61,9 @@ public class TuffX extends JavaPlugin implements Listener, PluginMessageListener
         saveDefaultConfig();
         this.CHUNKS_PER_TICK = getConfig().getInt("chunks-per-tick", 6);
         this.debug = getConfig().getBoolean("debug-mode", false);
+        this.enabledWorlds = new HashSet<>(getConfig().getStringList("enabled-worlds"));
+        
+        logDebug("TuffX will be active in the following worlds: " + String.join(", ", this.enabledWorlds));
 
         getServer().getMessenger().registerOutgoingPluginChannel(this, CHANNEL);
         getServer().getMessenger().registerIncomingPluginChannel(this, CHANNEL, this);
@@ -100,6 +105,12 @@ public class TuffX extends JavaPlugin implements Listener, PluginMessageListener
     
     private void handleIncomingPacket(Player player, Location loc, String action, int chunkX, int chunkZ, DataInputStream in) throws IOException {
         UUID playerId = player.getUniqueId();
+
+        if (!enabledWorlds.contains(player.getWorld().getName())) {
+            if (awaitingInitialBatch.contains(playerId)) player.sendPluginMessage(this, CHANNEL, createLoadFinishedPayload());
+            return;
+        }
+
         switch (action.toLowerCase()) {
             case "request_chunk":
                 handleSingleChunkRequest(player,chunkX,chunkZ,playerId);
@@ -181,6 +192,25 @@ public class TuffX extends JavaPlugin implements Listener, PluginMessageListener
                 }
             }
         }.runTaskTimer(this, 0L, 1L);
+    }
+
+    @EventHandler(priority = EventPriority.MONITOR)
+    public void onPlayerChangeWorld(PlayerChangedWorldEvent event) {
+        Player player = event.getPlayer();
+        UUID playerId = player.getUniqueId();
+
+        Queue<Vector> playerQueue = requestQueue.get(playerId);
+
+        if (playerQueue != null && !playerQueue.isEmpty()) {
+            logDebug("Player " + player.getName() + " changed worlds. Clearing " + playerQueue.size() + " pending chunk requests from their old world.");
+            playerQueue.clear();
+        }
+        
+        if (awaitingInitialBatch.remove(playerId)) {
+            logDebug("Player " + player.getName() + " changed worlds during initial load. Cancelling.");
+            player.sendPluginMessage(this, CHANNEL, createLoadFinishedPayload());
+            initialChunksToProcess.remove(playerId);
+        }
     }
 
     private void processAndSendChunk(final Player player, final Chunk chunk) {
