@@ -315,23 +315,39 @@ public class TuffX extends JavaPlugin implements Listener, PluginMessageListener
     }
     
     private byte[] createSectionPayload(ChunkSnapshot snapshot, int cx, int cz, int sectionY, Map<BlockData, int[]> cache) throws IOException {
-        try (ByteArrayOutputStream bout = new ByteArrayOutputStream(8200); DataOutputStream out = new DataOutputStream(bout)) {
-            out.writeUTF("chunk_data");
-            out.writeInt(cx); out.writeInt(cz); out.writeInt(sectionY);
-            boolean hasNonAirBlock = false;
-            int baseY = sectionY * 16;
-            for (int y = 0; y < 16; y++) for (int z = 0; z < 16; z++) for (int x = 0; x < 16; x++) {
-                int worldY = baseY + y;
-                BlockData blockData = snapshot.getBlockData(x, worldY, z);
+    try (ByteArrayOutputStream bout = new ByteArrayOutputStream(12300); DataOutputStream out = new DataOutputStream(bout)) {
+        out.writeUTF("chunk_data");
+        out.writeInt(cx);
+        out.writeInt(cz);
+        out.writeInt(sectionY);
 
-                int[] legacyData = cache.computeIfAbsent(blockData, viablockids::toLegacy);
+        boolean hasAnythingToSend = false;
+        int baseY = sectionY * 16;
 
-                if (legacyData[0] != 0) hasNonAirBlock = true;
-                out.writeShort((short) ((legacyData[1] << 12) | (legacyData[0] & 0xFFF)));
+        for (int y = 0; y < 16; y++) {
+            for (int z = 0; z < 16; z++) {
+                for (int x = 0; x < 16; x++) {
+                    int worldY = baseY + y;
+                    
+                    BlockData blockData = snapshot.getBlockData(x, worldY, z);
+                    int[] legacyData = cache.computeIfAbsent(blockData, viablockids::toLegacy);
+                    out.writeShort((short) ((legacyData[1] << 12) | (legacyData[0] & 0xFFF)));
+
+                    int blockLight = snapshot.getBlockEmittedLight(x, worldY, z);
+                    int skyLight = snapshot.getBlockSkyLight(x, worldY, z);
+                    out.writeByte((byte) ((skyLight << 4) | blockLight));
+
+                    if (legacyData[0] != 0 || blockLight != 0 || skyLight != 0) {
+                        hasAnythingToSend = true;
+                    }
+                }
             }
-            return hasNonAirBlock ? bout.toByteArray() : null;
         }
+        
+        return hasAnythingToSend ? bout.toByteArray() : null;
     }
+}
+
     
     @EventHandler(priority = EventPriority.MONITOR, ignoreCancelled = true)
     public void onBlockBreak(BlockBreakEvent event) { if (event.getBlock().getY() < 0) sendBlockUpdateToNearby(event.getBlock().getLocation(), Material.AIR.createBlockData()); }
