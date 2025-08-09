@@ -73,6 +73,8 @@ public class TuffX extends JavaPlugin implements Listener, PluginMessageListener
         startProcessorTask();
     }
 
+    public record ChunkSectionCoord(int cx, int cy, int cz) {}
+
     @Override
     public void onDisable() {
         if (processorTask != null) processorTask.cancel();
@@ -196,6 +198,7 @@ public class TuffX extends JavaPlugin implements Listener, PluginMessageListener
                                 if (world.isChunkLoaded(vec.getBlockX(), vec.getBlockZ())) {
                                     processAndSendChunk(player, world.getChunkAt(vec.getBlockX(), vec.getBlockZ()));
                                 } else {
+                                    world.loadChunk(vec.getBlockX(), vec.getBlockZ(), true);
                                     queue.add(vec); 
                                 }
                             }
@@ -350,57 +353,125 @@ public class TuffX extends JavaPlugin implements Listener, PluginMessageListener
 
     
     @EventHandler(priority = EventPriority.MONITOR, ignoreCancelled = true)
-    public void onBlockBreak(BlockBreakEvent event) { if (event.getBlock().getY() < 0) sendBlockUpdateToNearby(event.getBlock().getLocation(), Material.AIR.createBlockData()); }
+    public void onBlockBreak(BlockBreakEvent event) { if (event.getBlock().getY() < 0) handleBlockChange(event.getBlock().getLocation(), event.getBlock().getBlockData(), Material.AIR.createBlockData()); }
     @EventHandler(priority = EventPriority.MONITOR, ignoreCancelled = true)
-    public void onBlockPlace(BlockPlaceEvent event) { if (event.getBlock().getY() < 0) sendBlockUpdateToNearby(event.getBlock().getLocation(), event.getBlock().getBlockData()); }
+    public void onBlockPlace(BlockPlaceEvent event) { if (event.getBlock().getY() < 0) handleBlockChange(event.getBlock().getLocation(), event.getBlockReplacedState().getBlockData(), event.getBlock().getBlockData()); }
     @EventHandler(priority = EventPriority.MONITOR, ignoreCancelled = true)
-    public void onBlockPhysics(BlockPhysicsEvent event) { if (event.getBlock().getY() < 0) sendBlockUpdateToNearby(event.getBlock().getLocation(), event.getBlock().getBlockData()); }
+    public void onBlockPhysics(BlockPhysicsEvent event) { Block block = event.getBlock(); if (block.getY() < 0) sendSingleBlockUpdate(block.getLocation(), block.getBlockData());sendLightingUpdate(block.getLocation()); }
 
-    private void sendBlockUpdateToNearby(Location loc, BlockData data) {
-        try {
-            byte[] payload = createBlockUpdatePayload(loc, data);
-            if (payload == null) return;
-            for (Player p : loc.getWorld().getPlayers()) {
-                if (p.getLocation().distanceSquared(loc) < 4096) p.sendPluginMessage(this, CHANNEL, payload);
-            }
-        } catch (IOException e) { getLogger().severe("Failed to send block update: " + e.getMessage()); }
+    private void sendSingleBlockUpdate(Location loc, BlockData data) {
+        try (ByteArrayOutputStream bout = new ByteArrayOutputStream(64);
+            DataOutputStream out = new DataOutputStream(bout)) {
+            
+            out.writeUTF("block_update");
+            out.writeInt(loc.getBlockX());
+            out.writeInt(loc.getBlockY());
+            out.writeInt(loc.getBlockZ());
+            
+            int[] legacyData = viablockids.toLegacy(data);
+            out.writeShort((short) ((legacyData[1] << 12) | (legacyData[0] & 0xFFF)));
+            
+            byte[] payload = bout.toByteArray();
+            
+            new BukkitRunnable() {
+                @Override
+                public void run() {
+                    for (Player p : loc.getWorld().getPlayers()) {
+                        if (p.getLocation().distanceSquared(loc) < 4096) { 
+                            p.sendPluginMessage(TuffX.this, CHANNEL, payload);
+                        }
+                    }
+                }
+            }.runTaskAsynchronously(this);
+
+        } catch (IOException e) {
+            getLogger().severe("Failed to create single block update payload: " + e.getMessage());
+        }
     }
-    
-    private byte[] createBlockUpdatePayload(Location loc, BlockData data) throws IOException {
-        Map<Location, Byte> lightUpdates = new HashMap<>();
-        int radius = 16;
+
+    private void handleBlockChange(Location loc, BlockData oldData, BlockData newData) {
+        sendSingleBlockUpdate(loc, newData);
+
+        boolean oldEmits = oldData.getLightEmission() > 0;
+        boolean newEmits = newData.getLightEmission() > 0;
+        boolean oldOccludes = oldData.getMaterial().isOccluding();
+        boolean newOccludes = newData.getMaterial().isOccluding();
+
+        if (oldEmits != newEmits || oldOccludes != newOccludes) {
+            sendLightingUpdate(loc);
+        }
+    }
+
+    private void sendLightingUpdate(Location loc) {
+        Set<ChunkSectionCoord> sectionsToUpdate = new HashSet<>();
         World world = loc.getWorld();
 
-        for (int x = loc.getBlockX() - radius; x <= loc.getBlockX() + radius; x++) {
-            for (int y = loc.getBlockY() - radius; y <= loc.getBlockY() + radius; y++) {
-                for (int z = loc.getBlockZ() - radius; z <= loc.getBlockZ() + radius; z++) {
-                    if (y >= 0 || y < -64) continue;
-
-                    Block block = world.getBlockAt(x, y, z);
-                    int blockLight = block.getLightFromBlocks();
-                    int skyLight = block.getLightFromSky();
-                    byte packedLight = (byte) ((skyLight << 4) | blockLight);
+        for (int dx = -1; dx <= 1; dx++) {
+            for (int dy = -1; dy <= 1; dy++) {
+                for (int dz = -1; dz <= 1; dz++) {
+                    Location neighbor = loc.clone().add(dx, dy, dz);
+                    if (neighbor.getY() < -64 || neighbor.getY() >= 0) continue;
                     
-                    lightUpdates.put(new Location(world, x, y, z), packedLight);
+                    sectionsToUpdate.add(new ChunkSectionCoord(
+                        neighbor.getBlockX() >> 4, 
+                        neighbor.getBlockY() >> 4,
+                        neighbor.getBlockZ() >> 4 
+                    ));
                 }
             }
         }
 
-        try (ByteArrayOutputStream bout = new ByteArrayOutputStream(); DataOutputStream out = new DataOutputStream(bout)) {
-            out.writeUTF("block_update");
-            out.writeInt(loc.getBlockX()); out.writeInt(loc.getBlockY()); out.writeInt(loc.getBlockZ());
-            int[] legacyData = viablockids.toLegacy(data);
-            out.writeShort((short) ((legacyData[1] << 12) | (legacyData[0] & 0xFFF)));
+        for (ChunkSectionCoord sectionCoord : sectionsToUpdate) {
+            ChunkSnapshot snapshot = world.getChunkAt(sectionCoord.cx, sectionCoord.cz).getChunkSnapshot(true, false, false);
 
-            out.writeInt(lightUpdates.size());
-            for (Map.Entry<Location, Byte> entry : lightUpdates.entrySet()) {
-                Location pos = entry.getKey();
-                out.writeInt(pos.getBlockX());
-                out.writeInt(pos.getBlockY());
-                out.writeInt(pos.getBlockZ());
-                out.writeByte(entry.getValue());
+            new BukkitRunnable() {
+                @Override
+                public void run() {
+                    try {
+                        byte[] payload = createLightingPayload(snapshot, sectionCoord);
+                        new BukkitRunnable() {
+                            @Override
+                            public void run() {
+                                for (Player p : world.getPlayers()) {
+                                    if (p.getLocation().distanceSquared(loc) < 4096) {
+                                        p.sendPluginMessage(TuffX.this, CHANNEL, payload);
+                                    }
+                                }
+                            }
+                        }.runTask(TuffX.this);
+                    } catch (IOException e) {
+                        getLogger().severe("Failed to create lighting payload: " + e.getMessage());
+                    }
+                }
+            }.runTaskAsynchronously(this);
+        }
+    }
+
+    private byte[] createLightingPayload(ChunkSnapshot snapshot, ChunkSectionCoord section) throws IOException {
+        try (ByteArrayOutputStream bout = new ByteArrayOutputStream(4120); 
+            DataOutputStream out = new DataOutputStream(bout)) {
+
+            out.writeUTF("lighting_update");
+            out.writeInt(section.cx);
+            out.writeInt(section.cz);
+            out.writeInt(section.cy);
+
+            byte[] lightData = new byte[4096];
+            int baseY = section.cy * 16;
+            int i = 0;
+
+            for (int y = 0; y < 16; y++) {
+                for (int z = 0; z < 16; z++) {
+                    for (int x = 0; x < 16; x++) {
+                        int worldY = baseY + y;
+                        int blockLight = snapshot.getBlockEmittedLight(x, worldY, z);
+                        int skyLight = snapshot.getBlockSkyLight(x, worldY, z);
+                        lightData[i++] = (byte) ((skyLight << 4) | blockLight);
+                    }
+                }
             }
-
+            
+            out.write(lightData);
             return bout.toByteArray();
         }
     }
