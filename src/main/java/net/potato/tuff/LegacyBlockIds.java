@@ -96,8 +96,9 @@ public class LegacyBlockIds {
         put("tallgrass",              31,   2); // meta 1=fern,2=grass
         put("deadbush",               32,   0);
         put("piston",                 33,   0);
+        put("piston_head",                 34,   0);
         put("wool",                   35,   0); // meta 0=white …15=black
-
+        put("piston_extension", 36, 0);
         // —— 36–59 —— decoration & ores
         put("yellow_flower",          37,   0);
         put("red_flower",             38,   0); // meta 0=dandelion,1=poppy… etc.
