@@ -241,25 +241,26 @@ public class TuffX extends JavaPlugin implements Listener, PluginMessageListener
                     }
                     
                     Queue<Vector> queue = requestQueue.get(playerUUID);
-                    if (queue == null) continue;
+                    if (queue != null && !queue.isEmpty()) {
+                        for (int i = 0; i < CHUNKS_PER_TICK && !queue.isEmpty(); i++) {
+                            Vector vec = queue.poll();
+                            if (vec != null) {
+                                World world = player.getWorld();
 
-                    for (int i = 0; i < CHUNKS_PER_TICK && !queue.isEmpty(); i++) {
-                        Vector vec = queue.poll();
-                        if (vec == null) continue;
+                                WorldChunkKey key = new WorldChunkKey(world.getName(), vec.getBlockX(), vec.getBlockZ());
+                                List<byte[]> cachedData = chunkPayloadCache.getIfPresent(key);
+                                if (cachedData != null) {
+                                    sendPayloadsToPlayer(player, cachedData);
+                                    checkIfInitialLoadComplete(player);
+                                    continue;
+                                }
 
-                        World world = player.getWorld();
-                        WorldChunkKey key = new WorldChunkKey(world.getName(), vec.getBlockX(), vec.getBlockZ());
-
-                        List<byte[]> cachedData = chunkPayloadCache.getIfPresent(key);
-                        if (cachedData != null) {
-                            sendPayloadsToPlayer(player, cachedData);
-                            checkIfInitialLoadComplete(player);
-                        } else {
-                            if (world.isChunkLoaded(key.x(), key.z())) {
-                                processAndSendChunk(player, world.getChunkAt(key.x(), key.z()));
-                            } else {
-                                world.loadChunk(key.x(), key.z(), true);
-                                queue.add(vec);
+                                if (world.isChunkLoaded(vec.getBlockX(), vec.getBlockZ())) {
+                                    processAndSendChunk(player, world.getChunkAt(vec.getBlockX(), vec.getBlockZ()));
+                                } else {
+                                    world.loadChunk(vec.getBlockX(), vec.getBlockZ(), true);
+                                    queue.add(vec); 
+                                }
                             }
                         }
                     }
@@ -268,44 +269,17 @@ public class TuffX extends JavaPlugin implements Listener, PluginMessageListener
         }.runTaskTimer(this, 0L, 1L);
     }
 
-    private void processAndSendChunk(final Player player, final Chunk chunk) {
-        if (chunk == null || !player.isOnline() || chunkProcessorPool.isShutdown()) {
-            return;
-        }
-
-        final WorldChunkKey key = new WorldChunkKey(chunk.getWorld().getName(), chunk.getX(), chunk.getZ());
-
-        chunkProcessorPool.submit(() -> {
-            final List<byte[]> processedPayloads = new ArrayList<>();
-            final ChunkSnapshot snapshot = chunk.getChunkSnapshot(true, false, false);
-            final Map<BlockData, int[]> conversionCache = threadLocalConversionCache.get();
-            conversionCache.clear(); 
-            for (int sectionY = -4; sectionY < 0; sectionY++) {
-                if (!player.isOnline()) {
-                    return; 
-                }
-                try {
-                    byte[] payload = createSectionPayload(snapshot, chunk.getX(), chunk.getZ(), sectionY, conversionCache);
-                    if (payload != null) {
-                        processedPayloads.add(payload);
+    private void sendPayloadsToPlayer(Player player, List<byte[]> payloads) {
+        new BukkitRunnable() {
+            @Override
+            public void run() {
+                if (player.isOnline()) {
+                    for (byte[] payload : payloads) {
+                        player.sendPluginMessage(TuffX.this, CHANNEL, payload);
                     }
-                } catch (IOException e) {
-                    getLogger().severe("Payload creation failed for " + chunk.getX() + "," + chunk.getZ() + ": " + e.getMessage());
                 }
             }
-
-            chunkPayloadCache.put(key, processedPayloads);
-
-            new BukkitRunnable() {
-                @Override
-                public void run() {
-                    if (player.isOnline()) {
-                        sendPayloadsToPlayer(player, processedPayloads);
-                        checkIfInitialLoadComplete(player);
-                    }
-                }
-            }.runTask(this);
-        });
+        }.runTask(this);
     }
 
     @EventHandler(priority = EventPriority.MONITOR)
@@ -330,23 +304,47 @@ public class TuffX extends JavaPlugin implements Listener, PluginMessageListener
         player.sendPluginMessage(this, CHANNEL, createBelowY0StatusPayload(enabledWorlds.contains(player.getWorld().getName())));
     }
 
-    private void sendPayloadsToPlayer(Player player, List<byte[]> payloads) {
-        new BukkitRunnable() {
-            @Override
-            public void run() {
-                if (player.isOnline()) {
-                    for (byte[] payload : payloads) {
-                        player.sendPluginMessage(TuffX.this, CHANNEL, payload);
+    private void processAndSendChunk(final Player player, final Chunk chunk) {
+        if (chunk == null || !player.isOnline() || chunkProcessorPool.isShutdown()) {
+            return;
+        }
+
+        final WorldChunkKey key = new WorldChunkKey(chunk.getWorld().getName(), chunk.getX(), chunk.getZ());
+
+        chunkProcessorPool.submit(() -> {
+            final List<byte[]> processedPayloads = new ArrayList<>();
+            final ChunkSnapshot snapshot = chunk.getChunkSnapshot(true, false, false);
+            final Map<BlockData, int[]> conversionCache = threadLocalConversionCache.get();
+            conversionCache.clear(); 
+
+            for (int sectionY = -4; sectionY < 0; sectionY++) {
+                if (!player.isOnline()) {
+                    return;
+                }
+                try {
+                    byte[] payload = createSectionPayload(snapshot, chunk.getX(), chunk.getZ(), sectionY, conversionCache);
+                    if (payload != null) {
+                        processedPayloads.add(payload);
                     }
+                } catch (IOException e) {
+                    getLogger().severe("Payload creation failed for " + chunk.getX() + "," + chunk.getZ() + ": " + e.getMessage());
                 }
             }
-        }.runTask(this);
-    }
 
-    private void invalidateChunkCache(World world, int blockX, int blockZ) {
-        WorldChunkKey key = new WorldChunkKey(world.getName(), blockX >> 4, blockZ >> 4);
-        chunkPayloadCache.invalidate(key);
-        logDebug("Invalidated cache for chunk: " + key);
+            chunkPayloadCache.put(key, processedPayloads);
+
+            new BukkitRunnable() {
+                @Override
+                public void run() {
+                    if (player.isOnline()) {
+                        for (byte[] payload : processedPayloads) {
+                            player.sendPluginMessage(TuffX.this, CHANNEL, payload);
+                        }
+                        checkIfInitialLoadComplete(player);
+                    }
+                }
+            }.runTask(this);
+        });
     }
 
     private void checkIfInitialLoadComplete(Player player) {
@@ -364,6 +362,12 @@ public class TuffX extends JavaPlugin implements Listener, PluginMessageListener
                 initialChunksToProcess.remove(playerId);
             }
         }
+    }
+
+    private void invalidateChunkCache(World world, int blockX, int blockZ) {
+        WorldChunkKey key = new WorldChunkKey(world.getName(), blockX >> 4, blockZ >> 4);
+        chunkPayloadCache.invalidate(key);
+        logDebug("Invalidated cache for chunk: " + key);
     }
 
     private byte[] createLoadFinishedPayload() {
@@ -472,7 +476,8 @@ public class TuffX extends JavaPlugin implements Listener, PluginMessageListener
     public void onBlockPhysics(BlockPhysicsEvent event) { 
         Block block = event.getBlock(); 
         if (block.getY() < 0) {
-            sendSingleBlockUpdate(block.getLocation(), block.getBlockData());sendLightingUpdate(block.getLocation()); 
+            sendSingleBlockUpdate(block.getLocation(), block.getBlockData());
+            //sendLightingUpdate(block.getLocation()); 
             invalidateChunkCache(block.getWorld(), block.getX(), block.getZ());
         }
     }
