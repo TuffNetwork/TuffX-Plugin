@@ -77,7 +77,9 @@ public class TuffX extends JavaPlugin implements Listener, PluginMessageListener
 
     @Override
     public void onEnable() {
+        System.out.println("UPDATED!!!");
         saveDefaultConfig();
+        //saveResource("version.json", true);
         this.CHUNKS_PER_TICK = getConfig().getInt("chunks-per-tick", 6);
         this.debug = getConfig().getBoolean("debug-mode", false);
         this.enabledWorlds = new HashSet<>(getConfig().getStringList("enabled-worlds"));
@@ -108,6 +110,8 @@ public class TuffX extends JavaPlugin implements Listener, PluginMessageListener
         this.chunkProcessorPool = Executors.newFixedThreadPool(threadCount);
 
         startProcessorTask();
+
+        new Updater(this).scheduleCheck();
     }
 
     public record ChunkSectionCoord(int cx, int cy, int cz) {}

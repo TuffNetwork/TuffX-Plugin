@@ -86,8 +86,55 @@ public class ViaBlockIds {
         return "1.21";
     }
 
+    private InputStream findMappingFile() {
+        String[] versionParts = serverVersion.split("\\.");
+        
+        int major, minor, patch;
+
+        try {
+            major = Integer.parseInt(versionParts[0]);
+            minor = Integer.parseInt(versionParts[1]);
+            patch = versionParts.length > 2 ? Integer.parseInt(versionParts[2]) : 0;
+        } catch (NumberFormatException | ArrayIndexOutOfBoundsException e) {
+            Bukkit.getLogger().severe("[TuffX] Could not parse server version string: " + serverVersion);
+            return plugin.getResource("mapping-" + serverVersion + ".json");
+        }
+
+        Bukkit.getLogger().info("[TuffX] Searching for mappings, starting from " + serverVersion + " and going down.");
+
+        for (int m = minor; m >= 16; m--) { 
+            int startPatch = (m == minor) ? patch : 9;
+
+            for (int p = startPatch; p >= 0; p--) {
+                String versionToTest = major + "." + m + "." + p;
+                String filename = "mapping-" + versionToTest + ".json";
+                
+                InputStream is = plugin.getResource(filename);
+
+                if (is != null) {
+                    if (!versionToTest.equals(serverVersion)) {
+                        Bukkit.getLogger().info("[TuffX] Using fallback mapping file: " + filename);
+                    } else {
+                        Bukkit.getLogger().info("[TuffX] Found exact mapping file: " + filename);
+                    }
+                    return is;
+                }
+            }
+            
+            String minorVersionFilename = "mapping-" + major + "." + m + ".json";
+            InputStream is = plugin.getResource(minorVersionFilename);
+            if (is != null) {
+                Bukkit.getLogger().info("[TuffX] Using fallback mapping file: " + minorVersionFilename);
+                return is;
+            }
+        }
+
+        Bukkit.getLogger().severe("[TuffX] Could not find any suitable mapping file after checking all versions down to " + major + ".16.0");
+        return null;
+    }
+
     private void generateAndSaveMappings(File file) {
-        try (InputStream is = plugin.getResource("mapping-" + serverVersion + ".json")) {
+        try (InputStream is = findMappingFile()) {
             if (is == null) {
                 Bukkit.getLogger().severe("[TuffX] Failed to find mapping-" + serverVersion + ".json in plugin resources!");
                 return;
