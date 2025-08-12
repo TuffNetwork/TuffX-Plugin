@@ -38,7 +38,7 @@ public class Updater {
 
     private void checkForUpdates() {
         String localLatestVersion = currentVersion;
-                
+
         String versionUrl = "https://verytuffautoupdater.netlify.app/version-remote.json";
 
         try {
@@ -67,23 +67,9 @@ public class Updater {
             plugin.getLogger().warning("An error occurred while checking for updates: " + e.getMessage());
         }
     }
-    
-    private String getLocalLatestVersion() {
-        try (InputStream in = plugin.getResource("version.json")) {
-            if (in == null) {
-                return "0.0.0";
-            }
-            InputStreamReader reader = new InputStreamReader(in);
-            JsonObject json = JsonParser.parseReader(reader).getAsJsonObject();
-            return json.get("version").getAsString();
-        } catch (Exception e) {
-            plugin.getLogger().warning("Could not read internal latest.json file.");
-            return "0.0.0";
-        }
-    }
 
     private boolean isNewer(String latest, String current) {
-        return !latest.equalsIgnoreCase(current);
+        return !latest.trim().equalsIgnoreCase(current);
     }
     
     private void downloadUpdate(String url) {

@@ -77,7 +77,7 @@ public class TuffX extends JavaPlugin implements Listener, PluginMessageListener
 
     @Override
     public void onEnable() {
-        System.out.println("UPDATED!!!");
+        //System.out.println("UPDATED!!!");
         saveDefaultConfig();
         //saveResource("version.json", true);
         this.CHUNKS_PER_TICK = getConfig().getInt("chunks-per-tick", 6);
