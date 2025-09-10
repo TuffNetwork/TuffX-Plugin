@@ -55,6 +55,7 @@ public class TuffX extends JavaPlugin implements Listener, PluginMessageListener
     @Override
     public void onEnable() {
         getLogger().info("TuffX has been enabled.");
+        LegacyBlockIdManager.initialize(this);
         this.getServer().getMessenger().registerOutgoingPluginChannel(this, CHANNEL);
         this.getServer().getMessenger().registerIncomingPluginChannel(this, CHANNEL, this);
         this.getServer().getPluginManager().registerEvents(this, this);
