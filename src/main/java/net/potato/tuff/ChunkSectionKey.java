@@ -3,8 +3,6 @@ package net.potato.tuff;
 import java.util.Objects;
 import java.util.UUID;
 
-// formats stuff to be good boy strings
-
 public final class ChunkSectionKey {
     private final UUID playerId;
     private final String worldName;
@@ -14,7 +12,7 @@ public final class ChunkSectionKey {
 
     public ChunkSectionKey(UUID playerId, String worldName, int cx, int cz, int sectionY) {
         this.playerId = playerId;
-        this.worldName = worldName;
+        this.worldName = worldName != null ? worldName : "";
         this.cx = cx;
         this.cz = cz;
         this.sectionY = sectionY;
