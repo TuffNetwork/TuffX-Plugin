@@ -12,27 +12,30 @@ public class LegacyBlockIdManager {
     private static final Set<String> unmappedBlocks = new HashSet<>();
     private static boolean initialized = false;
 
-    public static void initialize(Plugin plugin) {
+    public static synchronized void initialize(Plugin plugin) {
         if (initialized) return;
-
-        for (Material material : Material.values()) {
+        
+        Material[] materials = Material.values();
+        for (int i = 0; i < materials.length; i++) {
+            Material material = materials[i];
             if (!material.isBlock()) {
-                ID_CACHE[material.ordinal()] = 0; // Air
+                ID_CACHE[i] = 0;
                 continue;
             }
 
             String blockName = material.name().toLowerCase();
-            int id = LegacyBlockIds.BLOCK_ID_MAP.getOrDefault(blockName, -1);
-            int meta = LegacyBlockIds.BLOCK_META_MAP.getOrDefault(blockName, 0);
-
-            if (id == -1) {
-                id = 1; 
+            Integer id = LegacyBlockIds.BLOCK_ID_MAP.get(blockName);
+            if (id == null) {
+                id = 1;
                 if (unmappedBlocks.add(blockName)) {
                     plugin.getLogger().warning("Unmapped block: " + blockName + ". Defaulting to stone (ID=1).");
                 }
             }
             
-            ID_CACHE[material.ordinal()] = (short) ((id & 0xFFF) | ((meta & 0xF) << 12));
+            Integer meta = LegacyBlockIds.BLOCK_META_MAP.get(blockName);
+            if (meta == null) meta = 0;
+            
+            ID_CACHE[i] = (short) ((id & 0xFFF) | ((meta & 0xF) << 12));
         }
         
         initialized = true;
@@ -40,6 +43,11 @@ public class LegacyBlockIdManager {
     }
 
     public static short getLegacyShort(Material material) {
-        return ID_CACHE[material.ordinal()];
+        if (material == null) return 0;
+        int ordinal = material.ordinal();
+        if (ordinal >= 0 && ordinal < ID_CACHE.length) {
+            return ID_CACHE[ordinal];
+        }
+        return 0;
     }
 }
