@@ -2,8 +2,7 @@ package net.potato.tuff;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.viaversion.viaversion.api.Via;
-import com.viaversion.viaversion.api.protocol.Protocol;
-import com.viaversion.viaversion.api.protocol.ProtocolPathEntry;
+import com.viaversion.viaversion.api.protocol.*;
 import com.viaversion.viaversion.api.protocol.version.ProtocolVersion;
 import com.viaversion.viabackwards.api.BackwardsProtocol;
 import com.viaversion.viabackwards.api.data.BackwardsMappingData;
@@ -11,231 +10,239 @@ import org.bukkit.Bukkit;
 import org.bukkit.block.Block;
 import org.bukkit.plugin.java.JavaPlugin;
 import org.bukkit.scheduler.BukkitRunnable;
-import org.bukkit.block.data.BlockData; 
-
-import java.io.File;
-import java.io.IOException;
-import java.io.InputStream;
-import java.util.Collections;
-import java.util.LinkedHashMap;
-import java.util.List;
-import java.util.Map;
+import org.bukkit.block.data.BlockData;
+import java.io.*;
+import java.util.*;
 import java.util.logging.Level;
+import it.unimi.dsi.fastutil.objects.*;
 
 public class ViaBlockIds {
-    private final JavaPlugin plugin;
-    private final String serverVersion;
-    private final File mappingsFile;
-    private Map<String, int[]> legacyMap = new LinkedHashMap<>();
+    private final JavaPlugin p;
+    private final String sv;
+    private final File mf;
+    private Object2ObjectOpenHashMap<String, int[]> lm = new Object2ObjectOpenHashMap<>();
 
-    public ViaBlockIds(JavaPlugin plugin) {
-        this.plugin = plugin;
-        this.serverVersion = getServerMinecraftVersion();
-        this.mappingsFile = new File(plugin.getDataFolder(), serverVersion + "-mappings.json");
+    public ViaBlockIds(JavaPlugin pl) {
+        p = pl;
+        sv = gsmv();
+        mf = new File(pl.getDataFolder(), sv + "-mappings.json");
 
-        Bukkit.getLogger().info("[TuffX] Server Minecraft Version: " + serverVersion);
+        Bukkit.getLogger().info("[TuffX] Server Minecraft Version: " + sv);
 
         new BukkitRunnable() {
             @Override
             public void run() {
-                initializeMappings();
+                im();
             }
-        }.runTaskLater(plugin, 1L);
+        }.runTaskLater(pl, 1L);
     }
 
-    private void initializeMappings() {
+    private void im() {
         if (Via.getAPI() == null) {
             Bukkit.getLogger().severe("[TuffX] ViaVersion API not found! Is ViaVersion installed?");
             return;
         }
 
-        if (!mappingsFile.exists()) {
+        if (!mf.exists()) {
             Bukkit.getLogger().info("[TuffX] Mapping file not found, generating...");
-            if (!plugin.getDataFolder().exists()) {
-                plugin.getDataFolder().mkdirs();
+            if (!p.getDataFolder().exists()) {
+                p.getDataFolder().mkdirs();
             }
-            generateAndSaveMappings(mappingsFile);
+            gasm(mf);
         } else {
-            Bukkit.getLogger().info("[TuffX] Loading mappings from " + mappingsFile.getName());
-            loadMappings(mappingsFile);
+            Bukkit.getLogger().info("[TuffX] Loading mappings from " + mf.getName());
+            lm(mf);
         }
     }
 
-    public int[] toLegacy(String blockStateKey) {
-        return legacyMap.getOrDefault(blockStateKey, new int[]{1, 0});
+    private static final int[] DEFAULT_LEGACY = {1, 0};
+    
+    public int[] toLegacy(String k) {
+        int[] result = lm.get(k);
+        return result != null ? result : DEFAULT_LEGACY;
     }
 
-    public int[] toLegacy(Block block) {
-        String blockKey = block.getBlockData().getAsString().replace("minecraft:", "");
-        return legacyMap.getOrDefault(blockKey, new int[]{1, 0});
+    public int[] toLegacy(Block b) {
+        String k = b.getBlockData().getAsString();
+        if (k.startsWith("minecraft:")) {
+            k = k.substring(10);
+        }
+        int[] result = lm.get(k);
+        return result != null ? result : DEFAULT_LEGACY;
     }
 
-    public int[] toLegacy(BlockData blockData) {
-        String blockKey = blockData.getAsString().replace("minecraft:", "");
-        return toLegacy(blockKey);
+    public int[] toLegacy(BlockData bd) {
+        String k = bd.getAsString();
+        if (k.startsWith("minecraft:")) {
+            k = k.substring(10);
+        }
+        int[] result = lm.get(k);
+        return result != null ? result : DEFAULT_LEGACY;
     }
 
-    private String getServerMinecraftVersion() {
-        String versionString = Bukkit.getServer().getVersion();
-        int mcIndex = versionString.indexOf("MC: ");
-        if (mcIndex != -1) {
-            int endIndex = versionString.indexOf(')', mcIndex);
-            return endIndex != -1 ? versionString.substring(mcIndex + 4, endIndex) : versionString.substring(mcIndex + 4);
+    private String gsmv() {
+        String vs = Bukkit.getServer().getVersion();
+        int mi = vs.indexOf("MC: ");
+        if (mi != -1) {
+            int ei = vs.indexOf(')', mi);
+            return ei != -1 ? vs.substring(mi + 4, ei) : vs.substring(mi + 4);
         }
         Bukkit.getLogger().warning("[TuffX] Could not detect Minecraft version. Defaulting to 1.21.");
         return "1.21";
     }
 
-    private InputStream findMappingFile() {
-        String[] versionParts = serverVersion.split("\\.");
+    private InputStream fmf() {
+        String[] vp = sv.split("\\.");
         
-        int major, minor, patch;
+        int maj, min, pat;
 
         try {
-            major = Integer.parseInt(versionParts[0]);
-            minor = Integer.parseInt(versionParts[1]);
-            patch = versionParts.length > 2 ? Integer.parseInt(versionParts[2]) : 0;
+            maj = Integer.parseInt(vp[0]);
+            min = Integer.parseInt(vp[1]);
+            pat = vp.length > 2 ? Integer.parseInt(vp[2]) : 0;
         } catch (NumberFormatException | ArrayIndexOutOfBoundsException e) {
-            Bukkit.getLogger().severe("[TuffX] Could not parse server version string: " + serverVersion);
-            return plugin.getResource("mapping-" + serverVersion + ".json");
+            Bukkit.getLogger().severe("[TuffX] Could not parse server version string: " + sv);
+            return p.getResource("mapping-" + sv + ".json");
         }
 
-        Bukkit.getLogger().info("[TuffX] Searching for mappings, starting from " + serverVersion + " and going down.");
+        Bukkit.getLogger().info("[TuffX] Searching for mappings, starting from " + sv + " and going down.");
 
-        for (int m = minor; m >= 16; m--) { 
-            int startPatch = (m == minor) ? patch : 9;
+        for (int m = min; m >= 16; m--) { 
+            int sp = (m == min) ? pat : 9;
 
-            for (int p = startPatch; p >= 0; p--) {
-                String versionToTest = major + "." + m + "." + p;
-                String filename = "mapping-" + versionToTest + ".json";
+            for (int pt = sp; pt >= 0; pt--) {
+                String vtt = maj + "." + m + "." + pt;
+                String fn = "mapping-" + vtt + ".json";
                 
-                InputStream is = plugin.getResource(filename);
+                InputStream is = p.getResource(fn);
 
                 if (is != null) {
-                    if (!versionToTest.equals(serverVersion)) {
-                        Bukkit.getLogger().info("[TuffX] Using fallback mapping file: " + filename);
+                    if (!vtt.equals(sv)) {
+                        Bukkit.getLogger().info("[TuffX] Using fallback mapping file: " + fn);
                     } else {
-                        Bukkit.getLogger().info("[TuffX] Found exact mapping file: " + filename);
+                        Bukkit.getLogger().info("[TuffX] Found exact mapping file: " + fn);
                     }
                     return is;
                 }
             }
             
-            String minorVersionFilename = "mapping-" + major + "." + m + ".json";
-            InputStream is = plugin.getResource(minorVersionFilename);
+            String mvfn = "mapping-" + maj + "." + m + ".json";
+            InputStream is = p.getResource(mvfn);
             if (is != null) {
-                Bukkit.getLogger().info("[TuffX] Using fallback mapping file: " + minorVersionFilename);
+                Bukkit.getLogger().info("[TuffX] Using fallback mapping file: " + mvfn);
                 return is;
             }
         }
 
-        Bukkit.getLogger().severe("[TuffX] Could not find any suitable mapping file after checking all versions down to " + major + ".16.0");
+        Bukkit.getLogger().severe("[TuffX] Could not find any suitable mapping file after checking all versions down to " + maj + ".16.0");
         return null;
     }
 
-    private void generateAndSaveMappings(File file) {
-        try (InputStream is = findMappingFile()) {
+    private void gasm(File f) {
+        try (InputStream is = fmf()) {
             if (is == null) {
-                Bukkit.getLogger().severe("[TuffX] Failed to find mapping-" + serverVersion + ".json in plugin resources!");
+                Bukkit.getLogger().severe("[TuffX] Failed to find mapping-" + sv + ".json in plugin resources!");
                 return;
             }
 
-            ObjectMapper mapper = new ObjectMapper();
-            Map<String, Object> root = mapper.readValue(is, Map.class);
-            List<String> states = (List<String>) root.get("blockstates");
+            ObjectMapper m = new ObjectMapper();
+            @SuppressWarnings("unchecked")
+            Map<String, Object> r = m.readValue(is, Map.class);
+            @SuppressWarnings("unchecked")
+            List<String> s = (List<String>) r.get("blockstates");
 
-            if (states == null) {
+            if (s == null) {
                 Bukkit.getLogger().severe("[TuffX] 'blockstates' key not found in JSON.");
                 return;
             }
 
-            Map<String, int[]> newLegacyMap = new LinkedHashMap<>();
-            Bukkit.getLogger().info("[TuffX] Generating legacy mappings for " + states.size() + " block states...");
+            Object2ObjectOpenHashMap<String, int[]> nlm = new Object2ObjectOpenHashMap<>();
+            Bukkit.getLogger().info("[TuffX] Generating legacy mappings for " + s.size() + " block states...");
 
-            for (int i = 0; i < states.size(); i++) {
-                String key = states.get(i).replace("minecraft:", "");
-                int[] legacy;
-                legacy = convertToLegacy(i);
-
-                newLegacyMap.put(key, legacy);
+            for (int i = 0; i < s.size(); i++) {
+                String k = s.get(i).replace("minecraft:", "");
+                int[] l = ctl(i);
+                nlm.put(k, l);
             }
 
-            this.legacyMap = newLegacyMap;
+            lm = nlm;
 
-            Map<String, Object> output = new LinkedHashMap<>();
-            output.put("blockstates", this.legacyMap);
+            Map<String, Object> o = new Object2ObjectOpenHashMap<>();
+            o.put("blockstates", lm);
 
-            file.getParentFile().mkdirs();
-            mapper.writerWithDefaultPrettyPrinter().writeValue(file, output);
-            Bukkit.getLogger().info("[TuffX] Successfully wrote mappings to " + file.getName());
+            f.getParentFile().mkdirs();
+            m.writerWithDefaultPrettyPrinter().writeValue(f, o);
+            Bukkit.getLogger().info("[TuffX] Successfully wrote mappings to " + f.getName());
 
         } catch (Exception e) {
             Bukkit.getLogger().log(Level.SEVERE, "[TuffX] Error generating legacy mappings.", e);
         }
     }
 
-    private void loadMappings(File file) {
+    private void lm(File f) {
         try {
-            ObjectMapper mapper = new ObjectMapper();
-            Map<String, Object> root = mapper.readValue(file, Map.class);
-            Map<String, List<Integer>> rawMap = (Map<String, List<Integer>>) root.get("blockstates");
+            ObjectMapper m = new ObjectMapper();
+            @SuppressWarnings("unchecked")
+            Map<String, Object> r = m.readValue(f, Map.class);
+            @SuppressWarnings("unchecked")
+            Map<String, List<Integer>> rm = (Map<String, List<Integer>>) r.get("blockstates");
 
-            if (rawMap == null) {
+            if (rm == null) {
                 Bukkit.getLogger().severe("[TuffX] Invalid format in mappings file. Regenerating...");
-                generateAndSaveMappings(file);
+                gasm(f);
                 return;
             }
 
-            legacyMap = new LinkedHashMap<>();
-            for (Map.Entry<String, List<Integer>> entry : rawMap.entrySet()) {
-                List<Integer> legacyList = entry.getValue();
-                if (legacyList != null && legacyList.size() == 2) {
-                    legacyMap.put(entry.getKey(), new int[]{legacyList.get(0), legacyList.get(1)});
+            lm = new Object2ObjectOpenHashMap<>();
+            for (Map.Entry<String, List<Integer>> e : rm.entrySet()) {
+                List<Integer> ll = e.getValue();
+                if (ll != null && ll.size() == 2) {
+                    lm.put(e.getKey(), new int[]{ll.get(0), ll.get(1)});
                 }
             }
-            Bukkit.getLogger().info("[TuffX] Loaded " + legacyMap.size() + " legacy mappings.");
+            Bukkit.getLogger().info("[TuffX] Loaded " + lm.size() + " legacy mappings.");
         } catch (IOException e) {
             Bukkit.getLogger().log(Level.SEVERE, "[TuffX] Failed to load mappings file.", e);
         }
     }
 
-    public int[] convertToLegacy(int modernBlockStateId) {
-        ProtocolVersion serverProtocol = Via.getAPI().getServerVersion().highestSupportedProtocolVersion();
-        ProtocolVersion clientProtocol = ProtocolVersion.v1_12_2;
+    public int[] ctl(int mbsi) {
+        ProtocolVersion sp = Via.getAPI().getServerVersion().highestSupportedProtocolVersion();
+        ProtocolVersion cp = ProtocolVersion.v1_12_2;
 
-        List<ProtocolPathEntry> path = Via.getManager()
+        List<ProtocolPathEntry> pt = Via.getManager()
             .getProtocolManager()
             .getProtocolPath(
-                clientProtocol.getVersion(),
-                serverProtocol.getVersion()
+                cp.getVersion(),
+                sp.getVersion()
             );
 
-        if (path == null) {
+        if (pt == null) {
             Bukkit.getLogger().warning("[TuffX] Protocol path is null!");
             return new int[]{1, 0};
         }
         
-        int currentStateId = modernBlockStateId;
+        int csi = mbsi;
 
-        for (int i = path.size() - 1; i >= 0; i--) {
-            ProtocolPathEntry entry = path.get(i);
-            Protocol protocol = entry.protocol();
+        for (int i = pt.size() - 1; i >= 0; i--) {
+            ProtocolPathEntry e = pt.get(i);
+            Protocol pr = e.protocol();
 
-            if (protocol instanceof BackwardsProtocol) {
-                BackwardsMappingData mappingData = ((BackwardsProtocol) protocol).getMappingData();
-                if (mappingData != null && mappingData.getBlockStateMappings() != null) {
-                    int newid = mappingData.getBlockStateMappings().getNewId(currentStateId);
+            if (pr instanceof BackwardsProtocol) {
+                BackwardsMappingData md = ((BackwardsProtocol) pr).getMappingData();
+                if (md != null && md.getBlockStateMappings() != null) {
+                    int ni = md.getBlockStateMappings().getNewId(csi);
 
-                    if (newid != -1) {
-                        currentStateId = newid;
+                    if (ni != -1) {
+                        csi = ni;
                     }
                 }
             }
         }
 
-        int blockId = currentStateId >> 4;
-        int meta = currentStateId & 0xF;
+        int bi = csi >> 4;
+        int mt = csi & 0xF;
 
-        return new int[]{blockId, meta};
+        return new int[]{bi, mt};
     }
 }
