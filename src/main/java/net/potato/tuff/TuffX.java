@@ -17,11 +17,10 @@ import org.bukkit.event.block.BlockPlaceEvent;
 import org.bukkit.event.player.PlayerInteractEvent;
 import org.bukkit.event.player.PlayerQuitEvent;
 import org.bukkit.inventory.ItemStack;
+import org.bukkit.plugin.Plugin;
 import org.bukkit.plugin.java.JavaPlugin;
 import org.bukkit.plugin.messaging.PluginMessageListener;
 import org.bukkit.scheduler.BukkitRunnable;
-import org.bukkit.scheduler.BukkitTask;
-import org.bukkit.util.Vector;
 import org.bukkit.event.block.BlockPhysicsEvent;
 import org.bukkit.event.block.BlockExplodeEvent;
 import org.bukkit.event.block.BlockFromToEvent;
@@ -31,11 +30,9 @@ import java.util.concurrent.*;
 import java.io.*;
 import java.nio.charset.StandardCharsets;
 import java.util.*;
-import java.util.concurrent.atomic.AtomicInteger;
 import com.google.common.cache.*;
 import java.util.logging.Level;
 import it.unimi.dsi.fastutil.objects.*;
-import it.unimi.dsi.fastutil.ints.*;
 import it.unimi.dsi.fastutil.shorts.*;
 import it.unimi.dsi.fastutil.bytes.*;
 
@@ -43,32 +40,19 @@ public class TuffX extends JavaPlugin implements Listener, PluginMessageListener
 
     public static final String CH = "eagler:below_y0";
     public ViaBlockIds v;
-
-    private static int CPT;
-
-    private final Object2ObjectOpenHashMap<UUID, ObjectArrayList<Vector>> rq = new Object2ObjectOpenHashMap<>();
     
     private final ObjectOpenHashSet<UUID> aib = new ObjectOpenHashSet<>();
-    private final Object2ObjectOpenHashMap<UUID, AtomicInteger> icp = new Object2ObjectOpenHashMap<>();
     private ObjectOpenHashSet<String> ew;
-
-    private BukkitTask pt;
-
     private Cache<WCK, ObjectArrayList<byte[]>> cc;
-
     private boolean d;
-
     private ExecutorService cp;
 
     private final ThreadLocal<Object2ObjectOpenHashMap<BlockData, int[]>> tlcc = ThreadLocal.withInitial(() -> new Object2ObjectOpenHashMap<>(256));
     private final ThreadLocal<ShortArrayList> tlba = ThreadLocal.withInitial(() -> new ShortArrayList(4096));
     private final ThreadLocal<ByteArrayList> tlla = ThreadLocal.withInitial(() -> new ByteArrayList(4096));
     private final ThreadLocal<ByteArrayOutputStream> tlos = ThreadLocal.withInitial(() -> new ByteArrayOutputStream(8256));
-    private final ObjectOpenHashSet<WCK> pg = new ObjectOpenHashSet<>();
     
     private static final int[] EMPTY_LEGACY = {1, 0};
-    private static final byte[] EMPTY_PAYLOAD = new byte[0];
-    private static final ObjectArrayList<byte[]> EMPTY_PAYLOAD_LIST = new ObjectArrayList<>(0);
 
     private void ld(String m) {
         if (d) getLogger().log(Level.INFO, "[TuffX-Debug] " + m);
@@ -79,13 +63,19 @@ public class TuffX extends JavaPlugin implements Listener, PluginMessageListener
     @Override
     public void onEnable() {
         saveDefaultConfig();
-        CPT = getConfig().getInt("chunks-per-tick", 6);
         d = getConfig().getBoolean("debug-mode", false);
         ObjectArrayList<String> ewList = new ObjectArrayList<>(getConfig().getStringList("enabled-worlds"));
         ew = new ObjectOpenHashSet<>(ewList.size());
         ew.addAll(ewList);
         
-        ld("TuffX will be active in the following worlds: " + String.join(", ", ew));
+        Plugin protocolLib = getServer().getPluginManager().getPlugin("ProtocolLib");
+        if (protocolLib == null) {
+            getLogger().severe("ProtocolLib not found! This plugin is required for proactive chunk sending.");
+            getLogger().severe("TuffX will not be able to send below y=0 data.");
+            getServer().getPluginManager().disablePlugin(this);
+            return;
+        }
+        ChunkPacketListener.initialize(this);
 
         cc = CacheBuilder.newBuilder()
             .maximumSize(getConfig().getInt("cache-size", 1024))
@@ -104,10 +94,8 @@ public class TuffX extends JavaPlugin implements Listener, PluginMessageListener
         int tc;
         if (ct <= 0) {
             tc = Math.max(1, Runtime.getRuntime().availableProcessors() / 2);
-            ld("Auto-detected and using " + tc + " threads for the chunk processor pool.");
         } else {
             tc = ct;
-            getLogger().info("Using user-configured thread count of " + tc + " for the chunk processor pool.");
         }
         
         cp = Executors.newFixedThreadPool(tc, r -> {
@@ -117,8 +105,6 @@ public class TuffX extends JavaPlugin implements Listener, PluginMessageListener
             return t;
         });
 
-        spt();
-
         new Updater(this).scheduleCheck();
     }
 
@@ -126,16 +112,10 @@ public class TuffX extends JavaPlugin implements Listener, PluginMessageListener
 
     @Override
     public void onDisable() {
-        if (pt != null) {
-            pt.cancel();
-            pt = null;
-        }
-
         if (cp != null) {
             cp.shutdown();
             try {
                 if (!cp.awaitTermination(10, TimeUnit.SECONDS)) {
-                    getLogger().warning("Chunk processor pool did not shut down cleanly, forcing shutdown.");
                     cp.shutdownNow();
                     if (!cp.awaitTermination(5, TimeUnit.SECONDS)) {
                         getLogger().severe("Failed to shutdown chunk processor pool!");
@@ -154,16 +134,16 @@ public class TuffX extends JavaPlugin implements Listener, PluginMessageListener
             cc = null;
         }
 
-        rq.clear();
         aib.clear();
-        icp.clear();
-        pg.clear();
         
         if (v != null) {
             v = null;
         }
-        
-        getLogger().info("TuffX has been disabled and cleaned up.");
+    }
+
+    public boolean isPlayerReady(Player p) {
+        if (p == null) return false;
+        return aib.contains(p.getUniqueId());
     }
 
     @Override
@@ -177,79 +157,26 @@ public class TuffX extends JavaPlugin implements Listener, PluginMessageListener
             byte[] ab = new byte[al];
             i.readFully(ab);
             String a = new String(ab, StandardCharsets.UTF_8);
-            hip(p, new Location(p.getWorld(), x, y, z), a, x, z, i);
+            hip(p, new Location(p.getWorld(), x, y, z), a);
         } catch (IOException e) {
             getLogger().warning("Failed to parse plugin message from " + p.getName() + ": " + e.getMessage());
         }
     }
 
-    private void hscr(Player p, int x, int z, UUID id) {
-        ObjectArrayList<Vector> q = rq.get(id);
-        if (q == null) {
-            q = new ObjectArrayList<>(64);
-            rq.put(id, q);
-        }
-        synchronized (q) {
-            q.add(new Vector(x, 0, z));
-        }
-    }
-    
-    private void hip(Player p, Location l, String a, int x, int z, DataInputStream i) throws IOException {
-        UUID id = p.getUniqueId();
-
+    private void hip(Player p, Location l, String a) {
         if (!ew.contains(p.getWorld().getName())) {
-            if (aib.contains(id)) p.sendPluginMessage(this, CH, clfp());
+            p.sendPluginMessage(this, CH, cby0sp(false));
             return;
         }
 
         switch (a.toLowerCase()) {
-            case "request_chunk":
-                hscr(p, x, z, id);
-                break;
-            case "request_chunk_batch":
-                if (aib.remove(id)) {
-                    int bs = i.readInt();
-                    ld("Received definitive initial batch of " + bs + " chunks. Queueing for processing.");
-
-                    icp.put(id, new AtomicInteger(bs));
-                    
-                    ObjectArrayList<Vector> pq = rq.get(id);
-                    if (pq == null) {
-                        pq = new ObjectArrayList<>(Math.max(64, bs));
-                        rq.put(id, pq);
-                    }
-                    synchronized (pq) {
-                        pq.ensureCapacity(pq.size() + bs);
-                        for (int j = 0; j < bs; j++) {
-                            pq.add(new Vector(i.readInt(), 0, i.readInt()));
-                        }
-                    }
-
-                    if (bs == 0) {
-                        cilc(p);
-                    }
-                } else {
-                    int bs = i.readInt();
-                    ObjectArrayList<Vector> pq = rq.get(id);
-                    if (pq == null) {
-                        pq = new ObjectArrayList<>(Math.max(64, bs));
-                        rq.put(id, pq);
-                    }
-                    synchronized (pq) {
-                        pq.ensureCapacity(pq.size() + bs);
-                        for (int j = 0; j < bs; j++) {
-                            pq.add(new Vector(i.readInt(), 0, i.readInt()));
-                        }
-                    }
-                }
-                break;
             case "ready":
-                ld("Player " + p.getName() + " is READY. Awaiting first chunk batch...");
+                ld("Player " + p.getName() + " is READY.");
                 if (ew.contains(p.getWorld().getName())) {
                     aib.add(p.getUniqueId());
                     p.sendPluginMessage(this, CH, cby0sp(true));
+                    resendChunksInView(p);
                 } else {
-                    ld("Not a supported world!");
                     p.sendPluginMessage(this, CH, cby0sp(false));
                 }
                 break;
@@ -266,6 +193,27 @@ public class TuffX extends JavaPlugin implements Listener, PluginMessageListener
         }
     }
 
+    public void resendChunksInView(Player p) {
+        World world = p.getWorld();
+        int viewDistance = p.getClientViewDistance();
+        int playerChunkX = p.getLocation().getChunk().getX();
+        int playerChunkZ = p.getLocation().getChunk().getZ();
+
+        getServer().getScheduler().runTaskAsynchronously(this, () -> {
+            for (int x = -viewDistance; x <= viewDistance; x++) {
+                for (int z = -viewDistance; z <= viewDistance; z++) {
+                    int currentChunkX = playerChunkX + x;
+                    int currentChunkZ = playerChunkZ + z;
+                    
+                    if (world.isChunkLoaded(currentChunkX, currentChunkZ)) {
+                        Chunk chunk = world.getChunkAt(currentChunkX, currentChunkZ);
+                        processAndSendChunk(p, chunk);
+                    }
+                }
+            }
+        });
+    }
+
     private byte[] cby0sp(boolean s) {
         try (ByteArrayOutputStream b = new ByteArrayOutputStream(); DataOutputStream o = new DataOutputStream(b)) {
             o.writeUTF("belowy0_status");
@@ -280,118 +228,37 @@ public class TuffX extends JavaPlugin implements Listener, PluginMessageListener
             return b.toByteArray();
         } catch (IOException e) { return null; }
     }
-    
-    private void spt() {
-        pt = new BukkitRunnable() {
-            @Override
-            public void run() {
-                ObjectOpenHashSet<UUID> keys = new ObjectOpenHashSet<>(rq.keySet());
-                for (UUID u : keys) {
-                    Player p = getServer().getPlayer(u);
-                    if (p == null || !p.isOnline()) {
-                        cp(u);
-                        continue;
-                    }
-                    
-                    ObjectArrayList<Vector> q = rq.get(u);
-                    if (q != null && !q.isEmpty()) {
-                        synchronized (q) {
-                            int sz = Math.min(CPT, q.size());
-                            for (int i = 0; i < sz; i++) {
-                                Vector v = q.remove(q.size() - 1);
-                                World w = p.getWorld();
-
-                                WCK k = new WCK(w.getName(), v.getBlockX(), v.getBlockZ());
-
-                                if (pg.contains(k)) {
-                                    q.add(v);
-                                    continue;
-                                }
-
-                                ObjectArrayList<byte[]> cd = cc.getIfPresent(k);
-                                if (cd != null) {
-                                    sptp(p, cd);
-                                    cilc(p);
-                                    continue;
-                                }
-
-                                if (w.isChunkLoaded(v.getBlockX(), v.getBlockZ())) {
-                                    pasc(p, w.getChunkAt(v.getBlockX(), v.getBlockZ()));
-                                } else {
-                                    w.loadChunk(v.getBlockX(), v.getBlockZ(), true);
-                                    pg.add(k);
-                                    
-                                    new BukkitRunnable() {
-                                        @Override
-                                        public void run() {
-                                            if (p.isOnline() && w.isChunkLoaded(v.getBlockX(), v.getBlockZ())) {
-                                                pasc(p, w.getChunkAt(v.getBlockX(), v.getBlockZ()));
-                                            } else {
-                                                ld("Chunk " + k + " was not ready after delay, re-queueing.");
-                                                q.add(v);
-                                            }
-                                            pg.remove(k); 
-                                        }
-                                    }.runTaskLater(TuffX.this, 5L); 
-                                }
-                            }
-                        }
-                    }
-                }
-            }
-        }.runTaskTimer(this, 0L, 1L);
-    }
-
-    private void sptp(Player p, ObjectArrayList<byte[]> pl) {
-        new BukkitRunnable() {
-            @Override
-            public void run() {
-                if (p.isOnline()) {
-                    for (byte[] py : pl) {
-                        p.sendPluginMessage(TuffX.this, CH, py);
-                    }
-                }
-            }
-        }.runTask(this);
-    }
 
     @EventHandler(priority = EventPriority.MONITOR)
     public void onPlayerChangeWorld(PlayerChangedWorldEvent e) {
         Player p = e.getPlayer();
-        UUID id = p.getUniqueId();
-
-        ObjectArrayList<Vector> pq = rq.get(id);
-        if (pq != null && !pq.isEmpty()) {
-            ld("Player " + p.getName() + " changed worlds. Clearing " + pq.size() + " pending chunk requests.");
-            synchronized (pq) {
-                pq.clear();
-            }
-        }
-        
-        if (icp.remove(id) != null) {
-            ld("Player " + p.getName() + " was in the middle of an initial chunk load. The process has been cancelled.");
-            aib.remove(id);
-            p.sendPluginMessage(this, CH, clfp());
-        }
-
         p.sendPluginMessage(this, CH, cdp());
-
-        p.sendPluginMessage(this, CH, cby0sp(ew.contains(p.getWorld().getName())));
+        boolean isEnabledWorld = ew.contains(p.getWorld().getName());
+        p.sendPluginMessage(this, CH, cby0sp(isEnabledWorld));
+        if (isPlayerReady(p) && isEnabledWorld) {
+            resendChunksInView(p);
+        }
     }
 
-    private void pasc(final Player p, final Chunk c) {
+    public void processAndSendChunk(final Player p, final Chunk c) {
         if (c == null || p == null || !p.isOnline() || cp == null || cp.isShutdown()) {
             return;
         }
-
         final WCK k = new WCK(c.getWorld().getName(), c.getX(), c.getZ());
-
+        ObjectArrayList<byte[]> cachedData = cc.getIfPresent(k);
+        if (cachedData != null) {
+            if (p.isOnline()) {
+                for (byte[] py : cachedData) {
+                    p.sendPluginMessage(TuffX.this, CH, py);
+                }
+            }
+            return;
+        }
         cp.submit(() -> {
             final ObjectArrayList<byte[]> pp = new ObjectArrayList<>(4);
             final ChunkSnapshot s = c.getChunkSnapshot(true, false, false);
             final Object2ObjectOpenHashMap<BlockData, int[]> cvt = tlcc.get();
             cvt.clear(); 
-
             for (int sy = -4; sy < 0; sy++) {
                 if (!p.isOnline()) {
                     return;
@@ -405,9 +272,7 @@ public class TuffX extends JavaPlugin implements Listener, PluginMessageListener
                     getLogger().severe("Payload creation failed for " + c.getX() + "," + c.getZ() + ": " + e.getMessage());
                 }
             }
-
             TuffX.this.cc.put(k, pp);
-
             new BukkitRunnable() {
                 @Override
                 public void run() {
@@ -415,67 +280,24 @@ public class TuffX extends JavaPlugin implements Listener, PluginMessageListener
                         for (byte[] py : pp) {
                             p.sendPluginMessage(TuffX.this, CH, py);
                         }
-                        cilc(p);
                     }
                 }
             }.runTask(TuffX.this);
         });
     }
 
-    private void cilc(Player p) {
-        UUID id = p.getUniqueId();
-        AtomicInteger ct = icp.get(id);
-
-        if (ct != null) {
-            int r = ct.decrementAndGet();
-            ld("Player " + p.getName() + " finished a chunk. Remaining initial chunks: " + r);
-            
-            if (r <= 0) {
-                ld("INITIAL LOAD COMPLETE for " + p.getName() + ". Sent finished packet.");
-                p.sendPluginMessage(this, CH, clfp());
-                
-                icp.remove(id);
-            }
-        }
-    }
-
     private void icc(World w, int x, int z) {
         WCK k = new WCK(w.getName(), x >> 4, z >> 4);
         cc.invalidate(k);
-        ld("Invalidated cache for chunk: " + k);
     }
-
-    private byte[] clfp() {
-        try (ByteArrayOutputStream b = new ByteArrayOutputStream(); 
-            DataOutputStream o = new DataOutputStream(b)) {
-            
-            o.writeUTF("y0_load_finished");
-            
-            return b.toByteArray();
-        } catch (IOException e) {
-            getLogger().severe("Failed to create the y0_load_finished payload!");
-            return null;
-        }
-    }
-
+    
     private void cp(UUID id) {
-        rq.remove(id);
         aib.remove(id);
-        icp.remove(id);
     }
 
     @EventHandler
     public void onPlayerQuit(PlayerQuitEvent e) {
         cp(e.getPlayer().getUniqueId());
-    }
-    
-    private byte[] cwp(String m, int n) {
-        try (ByteArrayOutputStream b = new ByteArrayOutputStream(); DataOutputStream o = new DataOutputStream(b)) {
-            o.writeUTF("welcome_data");
-            o.writeUTF(m);
-            o.writeInt(n);
-            return b.toByteArray();
-        } catch (IOException e) { return null; }
     }
     
     private byte[] csp(ChunkSnapshot s, int x, int z, int sy, Object2ObjectOpenHashMap<BlockData, int[]> c) throws IOException {
@@ -531,12 +353,10 @@ public class TuffX extends JavaPlugin implements Listener, PluginMessageListener
                 o.writeShort(ba.getShort(j));
                 o.writeByte(la.getByte(j));
             }
-            
             return b.toByteArray();
         }
     }
 
-    
     @EventHandler(priority = EventPriority.MONITOR, ignoreCancelled = true)
     public void onBlockBreak(BlockBreakEvent e) { 
         if (e.getBlock().getY() < 0) {
@@ -559,7 +379,6 @@ public class TuffX extends JavaPlugin implements Listener, PluginMessageListener
         if (b.getY() < 0) {
             final Location l = b.getLocation();
             final World w = l.getWorld();
-
             new BukkitRunnable() {
                 @Override
                 public void run() {
@@ -575,7 +394,6 @@ public class TuffX extends JavaPlugin implements Listener, PluginMessageListener
     public void onBlockExplode(BlockExplodeEvent e) {
         final ObjectOpenHashSet<WCK> ac = new ObjectOpenHashSet<>();
         final List<Block> btu = new ArrayList<>(e.blockList());
-
         new BukkitRunnable() {
             @Override
             public void run() {
@@ -585,9 +403,7 @@ public class TuffX extends JavaPlugin implements Listener, PluginMessageListener
                         ac.add(new WCK(b.getWorld().getName(), b.getX() >> 4, b.getZ() >> 4));
                     }
                 }
-
                 if (!ac.isEmpty()) {
-                    ld("Explosion updated " + ac.size() + " chunks below y=0.");
                     ac.forEach(cc::invalidate);
                 }
             }
@@ -597,7 +413,6 @@ public class TuffX extends JavaPlugin implements Listener, PluginMessageListener
     @EventHandler(priority = EventPriority.MONITOR, ignoreCancelled = true)
     public void onBlockFromTo(BlockFromToEvent e) {
         final Block b = e.getToBlock();
-
         if (b.getY() < 0) {
             new BukkitRunnable() {
                 @Override
@@ -620,7 +435,6 @@ public class TuffX extends JavaPlugin implements Listener, PluginMessageListener
 
             int[] ld = v.toLegacy(d);
             o.writeShort((short) ((ld[1] << 12) | (ld[0] & 0xFFF)));
-
             byte[] py = b.toByteArray();
 
             new BukkitRunnable() {
@@ -641,12 +455,10 @@ public class TuffX extends JavaPlugin implements Listener, PluginMessageListener
 
     private void hbc(Location l, BlockData od, BlockData nd) {
         ssbu(l, nd);
-
         boolean oe = od.getLightEmission() > 0;
         boolean ne = nd.getLightEmission() > 0;
         boolean oo = od.getMaterial().isOccluding();
         boolean no = nd.getMaterial().isOccluding();
-
         if (oe != ne || oo != no) {
             slu(l);
         }
@@ -655,7 +467,6 @@ public class TuffX extends JavaPlugin implements Listener, PluginMessageListener
     private void slu(Location l) {
         ObjectOpenHashSet<CSC> stu = new ObjectOpenHashSet<>();
         World w = l.getWorld();
-
         for (int dx = -1; dx <= 1; dx++) {
             for (int dy = -1; dy <= 1; dy++) {
                 for (int dz = -1; dz <= 1; dz++) {
@@ -670,10 +481,8 @@ public class TuffX extends JavaPlugin implements Listener, PluginMessageListener
                 }
             }
         }
-
         for (CSC sc : stu) {
             ChunkSnapshot s = w.getChunkAt(sc.x, sc.z).getChunkSnapshot(true, false, false);
-
             new BukkitRunnable() {
                 @Override
                 public void run() {
@@ -700,7 +509,6 @@ public class TuffX extends JavaPlugin implements Listener, PluginMessageListener
     private byte[] clp(ChunkSnapshot s, CSC sc) throws IOException {
         try (ByteArrayOutputStream b = new ByteArrayOutputStream(4120); 
             DataOutputStream o = new DataOutputStream(b)) {
-
             o.writeUTF("lighting_update");
             o.writeInt(sc.x);
             o.writeInt(sc.z);
@@ -720,7 +528,6 @@ public class TuffX extends JavaPlugin implements Listener, PluginMessageListener
                     }
                 }
             }
-            
             o.write(ld);
             return b.toByteArray();
         }

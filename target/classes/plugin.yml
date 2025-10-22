@@ -1,0 +1,18 @@
+name: TuffX
+version: 1.0.6
+main: net.potato.tuff.TuffX
+author: Potato
+api-version: 1.21
+depend: [ViaVersion, ViaBackwards]
+
+commands:
+  tuffx:
+    description: Base command for the TuffX plugin.
+    usage: /<command> mute
+    permission: tuffx.mute
+    aliases: [tx]
+
+permissions:
+  tuffx.mute:
+    description: Allows a user to mute/unmute the TuffX console output.
+    default: op

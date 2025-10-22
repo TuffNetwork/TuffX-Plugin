@@ -1,0 +1,28 @@
+#debug mode
+debug-mode: false
+
+#amount of chunks to send per tick to players
+chunks-per-tick: 6
+
+#worlds for y0 to be enabled in
+enabled-worlds:
+    - 'world'
+
+#the amount of threads for the chunk processor to use - using more threads processes chunks faster, but increases CPU usage
+#-1 is automatic
+chunk-processor-threads: -1
+
+#the size of the cache
+cache-size: 512
+#how long until the cache expires (minutes)
+cache-expiration: 5
+
+#auto updater config (very experimental)
+updater:
+  enabled: false
+
+  # update checking interval
+  check-interval-minutes: 30
+
+  # restart the server on update
+  restart-on-update: true
