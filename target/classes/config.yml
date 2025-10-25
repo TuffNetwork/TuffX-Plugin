@@ -16,13 +16,3 @@ chunk-processor-threads: -1
 cache-size: 512
 #how long until the cache expires (minutes)
 cache-expiration: 5
-
-#auto updater config (very experimental)
-updater:
-  enabled: false
-
-  # update checking interval
-  check-interval-minutes: 30
-
-  # restart the server on update
-  restart-on-update: true
