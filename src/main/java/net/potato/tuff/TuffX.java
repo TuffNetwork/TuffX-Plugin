@@ -25,6 +25,7 @@ import org.bukkit.event.block.BlockPhysicsEvent;
 import org.bukkit.event.block.BlockExplodeEvent;
 import org.bukkit.event.block.BlockFromToEvent;
 import org.bukkit.event.player.PlayerChangedWorldEvent;
+import org.bukkit.event.player.PlayerJoinEvent;
 
 import java.util.concurrent.*;
 import java.io.*;
@@ -170,7 +171,7 @@ public class TuffX extends JavaPlugin implements Listener, PluginMessageListener
         }
 
         switch (a.toLowerCase()) {
-            case "ready":
+            case "ready2":
                 ld("Player " + p.getName() + " is READY.");
                 aib.add(p.getUniqueId());
                 if (ew.contains(p.getWorld().getName())) {
@@ -191,6 +192,8 @@ public class TuffX extends JavaPlugin implements Listener, PluginMessageListener
                     }
                 }.runTask(this);
                 break;
+            case "ready":
+                p.kickPlayer("§cYour client is not compatible with the version of §6TuffX §cthe server has installed!\n§7Please update your client.");
         }
     }
 
@@ -217,7 +220,7 @@ public class TuffX extends JavaPlugin implements Listener, PluginMessageListener
 
     private byte[] cby0sp(boolean s) {
         try (ByteArrayOutputStream b = new ByteArrayOutputStream(); DataOutputStream o = new DataOutputStream(b)) {
-            o.writeUTF("belowy0_status");
+            o.writeUTF("y0_status");
             o.writeBoolean(s);
             return b.toByteArray();
         } catch (IOException e) { return null; }
@@ -239,6 +242,14 @@ public class TuffX extends JavaPlugin implements Listener, PluginMessageListener
         if (isPlayerReady(p) && isEnabledWorld) {
             resendChunksInView(p);
         }
+    }
+
+    @EventHandler(priority = EventPriority.MONITOR)
+    public void onPlayerJoin(PlayerJoinEvent e) {
+        Player p = e.getPlayer();
+        p.sendPluginMessage(this, CH, cdp());
+        boolean isEnabledWorld = ew.contains(p.getWorld().getName());
+        p.sendPluginMessage(this, CH, cby0sp(isEnabledWorld));
     }
 
     public void processAndSendChunk(final Player p, final Chunk c) {
