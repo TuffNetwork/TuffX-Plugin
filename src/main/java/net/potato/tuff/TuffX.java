@@ -200,7 +200,7 @@ public class TuffX extends JavaPlugin implements Listener, PluginMessageListener
         }.runTask(this);
         break;
       case "ready":
-        if (getConfig().getBoolean("kick-outdated-clients", false))
+        if (getConfig().getBoolean("kick-outdated-clients", true))
           p.kickPlayer(
               "§cYour client is not compatible with the version of §6TuffX §cthe server has installed!\n§7Please update your client.");
     }
