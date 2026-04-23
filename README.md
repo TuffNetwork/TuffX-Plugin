@@ -1,5 +1,7 @@
 # TuffX (Y0)
 
+# This plugin is deprecated. Use the new plugin, [TuffX+](https://github.com/TuffNetwork/TuffXPlus)
+
 ![preview](https://raw.githubusercontent.com/TuffNetwork/TuffX-Plugin/refs/heads/main/img/showcase.png)
 :-:
 TuffX allowing players to see and beat a trial chamber.
